@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { VertexAI } from '@google-cloud/vertexai';
-import { ResearchSession, SubTask } from '@/lib/types'; // Import from actual types file
+import { ResearchSession, SubTask } from '@/types';
+
 
 // Initialize Vertex AI
 // NOTE: Ensure process.env.GOOGLE_CLOUD_PROJECT is set or ADC is configured via gcp-login.sh
@@ -48,7 +49,8 @@ export async function POST(req: Request) {
 
         const requestBody = {
             contents: [{ role: 'user', parts: [{ text: query }] }],
-            systemInstruction: { role: 'system', parts: [{ text: systemInstruction }] } // Added role: 'system' for type compatibility
+            systemInstruction: { role: 'system' as const, parts: [{ text: systemInstruction }] }
+
         };
 
         const response = await generativeModel.generateContent(requestBody);
