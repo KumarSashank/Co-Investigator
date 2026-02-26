@@ -1,5 +1,5 @@
 import { Firestore } from '@google-cloud/firestore';
-import { ResearchSession, SubTask } from '../../../context/shared_context.md'; // Virtual import for context mapping
+import { ResearchSession, SubTask } from '@/types';
 
 // Note: Ensure process.env.GOOGLE_CLOUD_PROJECT is set or ADC is configured
 const firestore = new Firestore({
