@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { VertexAI } from '@google-cloud/vertexai';
-import { ResearchSession, SubTask } from '../../../../context/shared_context.md'; // Virtual import for context, will type properly later
+import { createSession } from '../../../../lib/firestore/stateEngine';
+import { ResearchSession, SubTask } from '../../../../types';
 
 // Initialize Vertex AI
 // NOTE: Ensure process.env.GOOGLE_CLOUD_PROJECT is set or ADC is configured via gcp-login.sh
@@ -10,7 +11,7 @@ const vertexAI = new VertexAI({
 });
 
 const generativeModel = vertexAI.getGenerativeModel({
-    model: 'gemini-1.5-pro',
+    model: 'gemini-2.0-flash',
     generationConfig: {
         responseMimeType: 'application/json',
     }
@@ -48,7 +49,7 @@ export async function POST(req: Request) {
 
         const requestBody = {
             contents: [{ role: 'user', parts: [{ text: query }] }],
-            systemInstruction: { parts: [{ text: systemInstruction }] }
+            systemInstruction: { role: 'system', parts: [{ text: systemInstruction }] }
         };
 
         const response = await generativeModel.generateContent(requestBody);
