@@ -1,0 +1,117 @@
+﻿{
+  "bucket": "gs://benchspark-data-1771447466-datasets",
+  "generated": "2026-02-24",
+  "datasets": [
+    {
+      "name": "bioRxiv/medRxiv metadata",
+      "path": "biorxiv-medrxiv/",
+      "size": "4.79 MiB",
+      "source": "https://api.biorxiv.org/details/, https://api.medrxiv.org/details/",
+      "file_count": 20,
+      "file_pattern": "biorxiv_metadata_offset_*.json, medrxiv_metadata_offset_*.json"
+    },
+    {
+      "name": "CIViC",
+      "path": "civic/",
+      "size": "6.58 MiB",
+      "source": "https://civicdb.org/downloads/nightly",
+      "file_count": 7,
+      "files": ["nightly-AcceptedAssertionSummaries.tsv", "nightly-AcceptedClinicalEvidenceSummaries.tsv", "nightly-FeatureSummaries.tsv", "nightly-MolecularProfileSummaries.tsv", "nightly-VariantGroupSummaries.tsv", "nightly-VariantSummaries.tsv", "nightly-civic_accepted.vcf"]
+    },
+    {
+      "name": "ClinGen",
+      "path": "clingen/",
+      "size": "31.57 MiB",
+      "source": "https://clinicalgenome.org/",
+      "file_count": 7,
+      "files": ["actionability-adult.tsv", "actionability-pediatric.tsv", "curation-activity-summary.csv", "dosage-sensitivity-all.csv", "dosage-sensitivity-genes.csv", "gene-disease-validity.csv", "variant-pathogenicity.csv"]
+    },
+    {
+      "name": "ClinicalTrials.gov",
+      "path": "clinicaltrials/",
+      "size": "152.25 MiB",
+      "source": "https://clinicaltrials.gov/AllPublicXML.zip, https://classic.clinicaltrials.gov/AllAPIJSON.zip",
+      "file_count": 2,
+      "files": ["AllAPIJSON.zip", "ctg-public-xml.zip"]
+    },
+    {
+      "name": "DepMap 25Q3",
+      "path": "depmap/",
+      "size": "36.37 GiB",
+      "source": "https://depmap.org/portal/api/download/files",
+      "file_count": 76
+    },
+    {
+      "name": "GTEx v8",
+      "path": "gtex/",
+      "size": "1.53 GiB",
+      "source": "https://storage.googleapis.com/adult-gtex/bulk-gex/v8/, https://storage.googleapis.com/adult-gtex/annotations/v8/",
+      "file_count": 4,
+      "files": ["GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz", "GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_tpm.gct.gz", "GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt", "GTEx_Analysis_v8_Annotations_SubjectPhenotypesDS.txt"]
+    },
+    {
+      "name": "Human Protein Atlas",
+      "path": "human-protein-atlas/",
+      "size": "121.37 MiB",
+      "source": "https://www.proteinatlas.org/download/",
+      "file_count": 3,
+      "files": ["proteinatlas.json.gz", "proteinatlas.tsv.zip", "proteinatlas.xml.gz"]
+    },
+    {
+      "name": "ORKG",
+      "path": "orkg/",
+      "size": "105.08 MiB",
+      "source": "https://orkg.org/api/rdf/dump",
+      "file_count": 1,
+      "files": ["orkg-dump.nt"]
+    },
+    {
+      "name": "Pathway Commons",
+      "path": "pathway-commons/",
+      "size": "243.82 MiB",
+      "source": "https://download.baderlab.org/PathwayCommons/PC2/v14/",
+      "file_count": 7,
+      "files": ["datasources.txt", "metadata.json", "pathways.txt.gz", "pc-hgnc.gmt.gz", "pc-hgnc.sif.gz", "pc-hgnc.txt.gz", "physical_entities.json.gz"]
+    },
+    {
+      "name": "PubMed Abstracts",
+      "path": "pubmed-abstracts/",
+      "size": "50.48 GiB",
+      "source": "https://ftp.ncbi.nlm.nih.gov/pubmed/baseline/",
+      "file_count": 1334,
+      "file_pattern": "pubmed26n0001.xml.gz through pubmed26n1334.xml.gz"
+    },
+    {
+      "name": "PubMedQA",
+      "path": "pubmedqa/",
+      "size": "2.48 MiB",
+      "source": "https://github.com/pubmedqa/pubmedqa",
+      "file_count": 2,
+      "files": ["ori_pqal.json", "test_ground_truth.json"]
+    },
+    {
+      "name": "PubTator 3.0",
+      "path": "pubtator/",
+      "size": "6.63 GiB",
+      "source": "https://ftp.ncbi.nlm.nih.gov/pub/lu/PubTatorCentral/",
+      "file_count": 7,
+      "files": ["bioconcepts2pubtatorcentral.gz", "cellline2pubtatorcentral.gz", "chemical2pubtatorcentral.gz", "disease2pubtatorcentral.gz", "gene2pubtatorcentral.gz", "mutation2pubtatorcentral.gz", "species2pubtatorcentral.gz"]
+    },
+    {
+      "name": "Reactome",
+      "path": "reactome/",
+      "size": "903.09 MiB",
+      "source": "https://reactome.org/download/current/",
+      "file_count": 9,
+      "files": ["ChEBI2Reactome_All_Levels.txt", "Ensembl2Reactome_All_Levels.txt", "FIsInGene_2025.zip", "NCBI2Reactome_All_Levels.txt", "ReactomePathways.gmt.zip", "ReactomePathways.txt", "ReactomePathwaysRelation.txt", "UniProt2Reactome_All_Levels.txt", "reactome.homo_sapiens.interactions.psi-mitab.txt"]
+    },
+    {
+      "name": "STRING (human)",
+      "path": "string/",
+      "size": "145.8 MiB",
+      "source": "https://string-db.org/cgi/download (taxid 9606)",
+      "file_count": 5,
+      "files": ["9606.protein.aliases.v12.0.txt.gz", "9606.protein.enrichment.terms.v12.0.txt.gz", "9606.protein.info.v12.0.txt.gz", "9606.protein.links.v12.0.txt.gz", "9606.protein.physical.links.v12.0.txt.gz"]
+    }
+  ]
+}

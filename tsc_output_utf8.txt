@@ -1,0 +1,9 @@
+﻿src/app/api/agent/plan/route.ts(3,42): error TS2307: Cannot find module '../../../../context/shared_context.md' or its corresponding type declarations.
+src/app/api/agent/plan/route.ts(54,64): error TS2345: Argument of type '{ contents: { role: string; parts: { text: any; }[]; }[]; systemInstruction: { parts: { text: string; }[]; }; }' is not assignable to parameter of type 'string | GenerateContentRequest'.
+  Type '{ contents: { role: string; parts: { text: any; }[]; }[]; systemInstruction: { parts: { text: string; }[]; }; }' is not assignable to type 'GenerateContentRequest'.
+    Types of property 'systemInstruction' are incompatible.
+      Type '{ parts: { text: string; }[]; }' is not assignable to type 'string | Content | undefined'.
+        Property 'role' is missing in type '{ parts: { text: string; }[]; }' but required in type 'Content'.
+src/lib/firestore/stateEngine.ts(2,42): error TS2307: Cannot find module '../../../context/shared_context.md' or its corresponding type declarations.
+src/lib/firestore/stateEngine.ts(55,45): error TS7006: Parameter 'task' implicitly has an 'any' type.
+src/lib/firestore/stateEngine.ts(65,48): error TS7006: Parameter 't' implicitly has an 'any' type.
