@@ -3,12 +3,16 @@ import { DeepResearchPlan, PlanStep } from '@/types';
 /**
  * In-Memory State Engine (Mocking Firestore)
  * 
- * Uses a simple Map to store sessions in server memory.
- * This works perfectly for local development and hackathon demos.
- * Implements the required firestore_upsert_session and firestore_get_session signatures.
+ * Uses globalThis to persist the Map across Next.js hot reloads.
+ * Without globalThis, Turbopack re-evaluates this module on every code change,
+ * creating a new empty Map and losing all sessions.
  */
 
-const sessions = new Map<string, DeepResearchPlan>();
+const globalForSessions = globalThis as unknown as { __sessions: Map<string, DeepResearchPlan> };
+if (!globalForSessions.__sessions) {
+    globalForSessions.__sessions = new Map();
+}
+const sessions = globalForSessions.__sessions;
 
 /**
  * Creates a new research session with the Vertex AI generated plan.
@@ -29,7 +33,7 @@ export async function createSession(originalQuery: string, plan: PlanStep[]): Pr
     };
 
     sessions.set(session_id, session);
-    console.log(`[StateEngine] Created session: ${session_id}`);
+    console.log(`[StateEngine] ✅ Created session: ${session_id} (total sessions in memory: ${sessions.size})`);
     return session_id;
 }
 
@@ -38,7 +42,10 @@ export async function createSession(originalQuery: string, plan: PlanStep[]): Pr
  */
 export async function firestore_upsert_session(session_id: string, patch_object: Partial<DeepResearchPlan>) {
     const session = sessions.get(session_id);
-    if (!session) throw new Error(`Session ${session_id} does not exist`);
+    if (!session) {
+        console.error(`[StateEngine] ❌ Upsert failed: session ${session_id} not found! Keys: [${Array.from(sessions.keys()).join(', ')}]`);
+        throw new Error(`Session ${session_id} does not exist`);
+    }
 
     const updated = {
         ...session,
@@ -46,16 +53,18 @@ export async function firestore_upsert_session(session_id: string, patch_object:
         updatedAt: new Date().toISOString()
     };
     sessions.set(session_id, updated);
-
-    const statusMsg = updated.awaiting_confirmation ? 'HITL_PAUSED' : 'RUNNING';
-    console.log(`[StateEngine] Upserted session: ${session_id} | Status: ${statusMsg}`);
+    console.log(`[StateEngine] Updated session: ${session_id}`);
 }
 
 /**
  * Retrieves the current session. Matches firestore_get_session(session_id).
  */
 export async function firestore_get_session(session_id: string): Promise<DeepResearchPlan | null> {
-    return sessions.get(session_id) || null;
+    const session = sessions.get(session_id) || null;
+    if (!session) {
+        console.error(`[StateEngine] ❌ Session NOT FOUND: "${session_id}". Known sessions: [${Array.from(sessions.keys()).join(', ')}]`);
+    }
+    return session;
 }
 
 /**
@@ -63,7 +72,10 @@ export async function firestore_get_session(session_id: string): Promise<DeepRes
  */
 export async function updateSubTask(session_id: string, stepId: string, taskUpdates: Partial<PlanStep>) {
     const session = sessions.get(session_id);
-    if (!session) throw new Error(`Session ${session_id} does not exist`);
+    if (!session) {
+        console.error(`[StateEngine] ❌ updateSubTask failed: session ${session_id} not found!`);
+        throw new Error(`Session ${session_id} does not exist`);
+    }
 
     const updatedPlan = session.plan.map((step: PlanStep) => {
         if (step.id === stepId) {
@@ -79,5 +91,5 @@ export async function updateSubTask(session_id: string, stepId: string, taskUpda
     };
 
     sessions.set(session_id, updatedSession);
-    console.log(`[StateEngine] Updated step ${stepId} in session ${session_id} to status: ${taskUpdates.status || 'unchanged'}`);
+    console.log(`[StateEngine] Updated step ${stepId} → status: ${taskUpdates.status || 'unchanged'}`);
 }

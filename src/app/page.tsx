@@ -33,7 +33,12 @@ export default function Home() {
 
     for (let i = 0; i < updatedSession.plan.length; i++) {
       const step = updatedSession.plan[i];
-      if (step.status === 'DONE' || step.status === 'FAILED') continue; // Skip completed
+      if (step.status === 'DONE' || step.status === 'FAILED') {
+        console.log(`[Execute] ⏭️ Skipping step ${step.id} (${step.name}) — already ${step.status}`);
+        continue;
+      }
+
+      console.log(`[Execute] 🔄 Starting step ${step.id} (${step.name}) → tools: [${step.tools.join(', ')}]`);
 
       // Mark step as RUNNING
       updatedSession = {
@@ -136,7 +141,9 @@ export default function Home() {
       return;
     }
 
-    // Unblock the session and find the step that was paused
+    // Unblock the session and mark the hitl_pause step as DONE
+    // CRITICAL: Do NOT reset to PENDING — that causes an infinite loop
+    // because the step is still a hitl_pause, so re-executing it pauses again.
     const updatedSession = {
       ...session,
       awaiting_confirmation: false,
@@ -145,16 +152,18 @@ export default function Home() {
       updatedAt: new Date().toISOString()
     };
 
-    // Convert the step from RUNNING back to PENDING so the loop can start it smoothly, 
-    // or we can pass the choice directly to the backend if we built API support for it.
-    // For now, we inject the user's choice into the next step's inputs.
+    // Mark the RUNNING hitl_pause step as DONE so the loop skips past it
     const runningIdx = updatedSession.plan.findIndex(t => t.status === 'RUNNING');
     if (runningIdx !== -1) {
-      updatedSession.plan[runningIdx].inputs.user_choice = choice;
-      updatedSession.plan[runningIdx].inputs.user_feedback = feedback;
-      updatedSession.plan[runningIdx].status = 'PENDING'; // Reset so loop catches it
+      updatedSession.plan[runningIdx].status = 'DONE'; // Mark as completed
+      updatedSession.plan[runningIdx].result_data = {
+        user_choice: choice,
+        user_feedback: feedback,
+        approved_at: new Date().toISOString()
+      };
     }
 
+    console.log(`[HITL] ✅ User approved. Step ${runningIdx !== -1 ? updatedSession.plan[runningIdx].id : '?'} → DONE. Resuming execution...`);
     setSession(updatedSession);
     executeAllTasks(updatedSession);
 
