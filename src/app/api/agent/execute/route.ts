@@ -1,99 +1,142 @@
 import { NextResponse } from 'next/server';
-import { getSession, updateSubTask } from '../../../../lib/firestore/stateEngine';
-import { SubTask } from '../../../../types';
+import { firestore_get_session, firestore_upsert_session, updateSubTask } from '@/lib/firestore/stateEngine';
+import { gcs_write } from '@/lib/gcs';
+import { logger } from '@/lib/logger';
+import { pubmed_search, pubmed_fetch } from '@/lib/pubmed';
+import { openalex_search_authors, openalex_get_author } from '@/lib/openalex';
 
 const LOG = '🤖 [Execute]';
 
-/**
- * POST /api/agent/execute
- * Executes a single sub-task from the plan by calling the corresponding Tool API route.
- * This represents the "Act" and "Observe" parts of the ReAct loop.
- */
 export async function POST(req: Request) {
-    console.log(`\n${'═'.repeat(60)}`);
-    console.log(`${LOG} POST /api/agent/execute`);
+    logger.info(`\n${'═'.repeat(60)}`);
+
     try {
         const { sessionId, taskId, toolParams } = await req.json();
-        console.log(`${LOG} Input: sessionId="${sessionId}", taskId="${taskId}"`);
+        logger.info({ sessionId, taskId }, `${LOG} Execution requested`);
 
         if (!sessionId || !taskId) {
-            console.error(`${LOG} ❌ Missing required params`);
             return NextResponse.json({ error: 'sessionId and taskId are required' }, { status: 400 });
         }
 
         // 1. Fetch current session state
-        console.log(`${LOG} Fetching session...`);
-        const session = await getSession(sessionId);
+        const session = await firestore_get_session(sessionId);
         if (!session) {
-            console.error(`${LOG} ❌ Session not found: ${sessionId}`);
             return NextResponse.json({ error: 'Session not found' }, { status: 404 });
         }
-        console.log(`${LOG} ✅ Session found: query="${session.originalQuery}", ${session.plan.length} tasks`);
 
-        const task = session.plan.find((t: SubTask) => t.id === taskId);
-        if (!task) {
-            console.error(`${LOG} ❌ Task ${taskId} not found in plan`);
+        const step = session.plan.find(t => t.id === taskId);
+        if (!step) {
             return NextResponse.json({ error: 'Task not found in session plan' }, { status: 404 });
         }
-        console.log(`${LOG} Task: "${task.description}" → tool: ${task.toolToUse}`);
 
-        // 2. Mark task as in progress
-        await updateSubTask(sessionId, taskId, { status: 'in_progress' });
-        console.log(`${LOG} Status → in_progress`);
+        logger.info(`${LOG} Executing Tool(s): ${step.tools.join(', ')} | Intent: ${step.intent}`);
 
-        // 3. Execute the appropriate tool
-        let simulatedToolResult = null;
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+        // Handle explicit hitl_pause tool requested in the plan
+        if (step.tools.includes('hitl_pause')) {
+            logger.info(`${LOG} ⏸️ HITL Pause requested by plan`);
 
-        if (task.toolToUse === 'bigquery') {
-            console.log(`${LOG} 🗄️ Calling BigQuery tool...`);
-            const url = `${baseUrl}/api/tools/bigquery?disease=${encodeURIComponent(session.originalQuery)}`;
-            console.log(`${LOG}    URL: ${url}`);
-            const res = await fetch(url);
-            console.log(`${LOG}    Response: ${res.status} ${res.statusText}`);
-            simulatedToolResult = await res.json();
-        }
-        else if (task.toolToUse === 'openalex') {
-            console.log(`${LOG} 🔬 Calling OpenAlex tool...`);
-            const url = `${baseUrl}/api/tools/openalex?keyword=${encodeURIComponent(session.originalQuery)}`;
-            console.log(`${LOG}    URL: ${url}`);
-            const res = await fetch(url);
-            console.log(`${LOG}    Response: ${res.status} ${res.statusText}`);
-            simulatedToolResult = await res.json();
-        }
-        else if (task.toolToUse === 'pubmed') {
-            console.log(`${LOG} 📄 Calling PubMed tool...`);
-            const url = `${baseUrl}/api/tools/pubmed?query=${encodeURIComponent(session.originalQuery)}`;
-            console.log(`${LOG}    URL: ${url}`);
-            const res = await fetch(url);
-            console.log(`${LOG}    Response: ${res.status} ${res.statusText}`);
-            simulatedToolResult = await res.json();
-        }
-        else if (task.toolToUse === 'none') {
-            console.log(`${LOG} 🤖 Synthesis step — no tool call needed`);
-            simulatedToolResult = { message: 'Synthesis step completed', query: session.originalQuery };
+            // Mark step as running so it pauses here, but we set session awaiting_confirmation
+            await updateSubTask(sessionId, taskId, { status: 'RUNNING' });
+            await firestore_upsert_session(sessionId, {
+                awaiting_confirmation: true,
+                checkpoint_question: step.inputs.question || "Do you want to proceed?",
+                checkpoint_options: step.inputs.options || ["Yes", "No"]
+            });
+
+            return NextResponse.json({
+                status: 'hitl_paused',
+                taskId,
+                question: step.inputs.question,
+                options: step.inputs.options
+            });
         }
 
-        console.log(`${LOG} Tool result preview: ${JSON.stringify(simulatedToolResult).substring(0, 200)}...`);
+        // 2. Mark step RUNNING
+        await updateSubTask(sessionId, taskId, { status: 'RUNNING' });
 
-        // 4. Update the task with the result and mark it complete
+        // 3. Execute the appropriate tools and collect results
+        const combinedResults: Record<string, any> = {};
+
+        for (const toolName of step.tools) {
+            logger.info(`${LOG} Running specific tool: ${toolName}`);
+
+            try {
+                if (toolName === 'pubmed_search') {
+                    const res = await pubmed_search(step.inputs.query, step.inputs.from_year, step.inputs.to_year);
+                    combinedResults.pubmed_search = res;
+                }
+                else if (toolName === 'pubmed_fetch') {
+                    // It can get pmids directly from inputs or from a previous step's artifact...
+                    // For now, assume inputs.pmids
+                    const pmids = step.inputs.pmids || [];
+                    const res = await pubmed_fetch(pmids);
+                    combinedResults.pubmed_fetch = res;
+                }
+                else if (toolName === 'openalex_search_authors') {
+                    const res = await openalex_search_authors(step.inputs.query, step.inputs.from_year, step.inputs.to_year, step.inputs.keywords);
+                    combinedResults.openalex_search_authors = res;
+                }
+                else if (toolName === 'openalex_get_author') {
+                    const res = await openalex_get_author(step.inputs.author_id);
+                    combinedResults.openalex_get_author = res;
+                }
+                else if (toolName === 'bigquery') {
+                    // Call our internal hackathon api as a fallback wrapper for now, 
+                    // or implement direct BQ call here if needed
+                    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+                    const disease = step.inputs.disease || step.inputs.query || session.user_request;
+                    const bqRes = await fetch(`${baseUrl}/api/tools/bigquery?disease=${encodeURIComponent(disease)}`);
+                    combinedResults.bigquery = await bqRes.json();
+                }
+                else if (toolName === 'none') {
+                    combinedResults.none = { message: 'Synthesis step triggered' };
+                }
+                else if (toolName === 'vertex_search_retrieve') {
+                    // Since we don't have the real Vertex Search Datastore UUID right now, mock it
+                    combinedResults.vertex_search_retrieve = {
+                        message: "Vertex Search grounding will be applied at final report generation time."
+                    };
+                }
+            } catch (toolError: any) {
+                logger.error({ toolName, error: toolError.message }, `${LOG} ❌ Tool failed`);
+                combinedResults[toolName] = { error: toolError.message };
+            }
+        }
+
+        // 4. Write raw tool outputs to GCS (simulate DeepResearch observability)
+        const gcsPath = `runs/${sessionId}/${taskId}.json`;
+        let artifactUri = '';
+        try {
+            artifactUri = await gcs_write(gcsPath, combinedResults);
+
+            // Update session artifacts dictionary
+            const sessionArtifacts = session.artifacts || {};
+            sessionArtifacts[taskId] = artifactUri;
+            await firestore_upsert_session(sessionId, { artifacts: sessionArtifacts });
+        } catch (gcsError: any) {
+            logger.error({ error: gcsError.message }, `${LOG} ❌ GCS Write Failed. Continuing anyway...`);
+            artifactUri = `error://gcs_write_failed`;
+        }
+
+        // 5. Mark task DONE
         await updateSubTask(sessionId, taskId, {
-            status: 'completed',
-            resultData: simulatedToolResult
+            status: 'DONE',
+            result_data: combinedResults // Kept in state for local rendering convenience
         });
-        console.log(`${LOG} ✅ Task ${taskId} completed`);
-        console.log(`${'═'.repeat(60)}\n`);
+
+        logger.info(`${LOG} ✅ Task ${taskId} DONE. Artifact Written: ${artifactUri}`);
 
         return NextResponse.json({
             status: 'success',
             taskId,
-            result: simulatedToolResult
+            artifactUri,
+            result: combinedResults
         });
 
     } catch (error: any) {
-        console.error(`${LOG} ❌ FATAL ERROR:`, error.message);
-        console.error(`${LOG}    Stack:`, error.stack);
-        console.log(`${'═'.repeat(60)}\n`);
+        logger.error({ err: error.message, stack: error.stack }, `${LOG} ❌ FATAL EXECUTION ERROR`);
         return NextResponse.json({ error: error.message }, { status: 500 });
+    } finally {
+        logger.info(`${'═'.repeat(60)}\n`);
     }
 }

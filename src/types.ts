@@ -1,36 +1,65 @@
 // ============================================================
-// Co-Investigator — Shared TypeScript Interfaces & Mock Data
-// Source: context/shared_context.md
+// Co-Investigator — Shared TypeScript Interfaces
+// Implementing strict DeepResearch Plan DSL structure
 // ============================================================
 
-// ---- Task & State Management (Firestore & Frontend) ----
+export type AgentToolName =
+  | 'vertex_search_retrieve'
+  | 'openalex_search_authors'
+  | 'openalex_get_author'
+  | 'pubmed_search'
+  | 'pubmed_fetch'
+  | 'bigquery'  // Keeping hackathon tool
+  | 'none';
 
-export interface ResearchSession {
+export type StepIntent =
+  | 'retrieve'
+  | 'rank'
+  | 'verify'
+  | 'extract'
+  | 'synthesize'
+  | 'other';
+
+export type StepStatus = 'PENDING' | 'RUNNING' | 'DONE' | 'BLOCKED' | 'FAILED';
+
+export interface PlanStep {
   id: string;
-  originalQuery: string;
-  status: 'planning' | 'running' | 'hitl_paused' | 'completed' | 'error';
-  plan: SubTask[];
-  finalReportMarkdown?: string;
+  name: string;
+  intent: StepIntent | string;
+  tools: AgentToolName[];
+  inputs: Record<string, any>;
+  expected_output: string[];
+  status: StepStatus;
+  notes: string;
+
+  // Custom fields not strict to DSL but useful for tracking execution
+  result_data?: any;
+  error?: string;
+}
+
+export interface DeepResearchPlan {
+  session_id: string;
+  user_request: string;
+  plan: PlanStep[];
+  awaiting_confirmation: boolean;
+  checkpoint_question: string | null;
+  checkpoint_options?: string[]; // Added to track specific multiple choice options (A, B, C...)
+  artifacts: Record<string, string>; // Maps description to gs:// URI
+  final_output: string | null;
+
+  // Backend tracking
   createdAt: string;
   updatedAt: string;
 }
 
-export interface SubTask {
-  id: string;
-  description: string;
-  toolToUse: 'bigquery' | 'openalex' | 'pubmed' | 'none';
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
-  resultData?: any;
-}
-
 export interface HitlApprovalPayload {
-  sessionId: string;
-  approved: boolean;
+  session_id: string;
+  approved: boolean; // Keep for legacy / simple hitl
+  choice?: string; // The specific option (A, B, C, D) the user chose
   userFeedback?: string;
 }
 
 // ---- Tool Outputs (API Responses) ----
-
 export interface BigQueryDiseaseResponse {
   diseaseId: string;
   diseaseName: string;
@@ -42,6 +71,8 @@ export interface BigQueryDiseaseResponse {
   pathways: string[];
 }
 
+export type ActivityLevel = 'ACTIVE' | 'MODERATE' | 'LOW';
+
 export interface OpenAlexAuthorResponse {
   authorId: string;
   displayName: string;
@@ -51,6 +82,9 @@ export interface OpenAlexAuthorResponse {
     citedByCount: number;
     hIndex: number;
   };
+  score: number;
+  activityLevel: ActivityLevel;
+  lastRelevantWorkYear: number;
   recentPublications: Array<{
     title: string;
     year: number;
@@ -64,86 +98,6 @@ export interface PubMedArticleResponse {
   abstract: string;
   publicationDate: string;
   authors: string[];
+  affiliations: string[];
+  correspondingEmail: string | null;
 }
-
-// ---- Mock Data ----
-
-export const MOCK_PLAN: SubTask[] = [
-  {
-    id: 'step-1',
-    description: 'Query BigQuery for IPF target-disease associations and evidence scores',
-    toolToUse: 'bigquery',
-    status: 'completed',
-    resultData: {
-      diseaseId: 'EFO_0000768',
-      diseaseName: 'Idiopathic Pulmonary Fibrosis',
-      associatedTargets: [
-        { targetId: 'ENSG00000163735', targetSymbol: 'MUC5B', evidenceScore: 0.92 },
-        { targetId: 'ENSG00000120217', targetSymbol: 'TERT', evidenceScore: 0.87 },
-        { targetId: 'ENSG00000164362', targetSymbol: 'TGFB1', evidenceScore: 0.81 },
-      ],
-      pathways: ['TGF-beta signaling', 'Telomere maintenance', 'Wnt signaling pathway'],
-    },
-  },
-  {
-    id: 'step-2',
-    description: 'Fetch recent IPF publications from PubMed (last 3 years)',
-    toolToUse: 'pubmed',
-    status: 'in_progress',
-  },
-  {
-    id: 'step-3',
-    description: 'Identify active IPF researchers via OpenAlex citation metrics',
-    toolToUse: 'openalex',
-    status: 'pending',
-  },
-  {
-    id: 'step-4',
-    description: 'Cross-reference targets with clinical trial data',
-    toolToUse: 'bigquery',
-    status: 'pending',
-  },
-  {
-    id: 'step-5',
-    description: 'Synthesize findings into a final research brief',
-    toolToUse: 'none',
-    status: 'pending',
-  },
-];
-
-export const MOCK_SESSION: ResearchSession = {
-  id: 'session-abc-123',
-  originalQuery: 'Investigate the genetic basis of Idiopathic Pulmonary Fibrosis (IPF) progression and identify key researchers in the field',
-  status: 'hitl_paused',
-  plan: MOCK_PLAN,
-  finalReportMarkdown: `## Research Brief: Idiopathic Pulmonary Fibrosis (IPF)
-
-### Executive Summary
-Idiopathic Pulmonary Fibrosis (IPF) is a chronic, progressive lung disease characterized by scarring of the lung tissue. Our analysis identified **3 high-confidence genetic targets** and **12 active researchers** in the field.
-
-### Key Genetic Targets
-
-| Target | Symbol | Evidence Score | Pathway |
-|--------|--------|---------------|---------|
-| MUC5B | rs35705950 | 0.92 | Mucin production |
-| TERT | rs2736100 | 0.87 | Telomere maintenance |
-| TGFB1 | rs1800470 | 0.81 | TGF-β signaling |
-
-### Top Researchers
-1. **Dr. Imre Noth** — University of Virginia, h-index: 52
-2. **Dr. Talmadge E. King Jr.** — UCSF, h-index: 78
-3. **Dr. Ganesh Raghu** — University of Washington, h-index: 91
-
-### Recent Publications (2023-2025)
-- *"Genome-wide association study identifies new susceptibility locus for IPF"* — Nature Genetics, 2024
-- *"MUC5B promoter variant and telomere length in IPF progression"* — AJRCCM, 2023
-- *"Single-cell RNA sequencing reveals novel fibroblast subtypes in IPF lungs"* — Science, 2025
-
-### Conclusions
-The convergence of **telomere biology** and **TGF-β signaling** pathways presents the most promising therapeutic targets. Further investigation into the MUC5B promoter variant is recommended.
-
----
-*Sources verified via Google Search grounding. Confidence: High.*`,
-  createdAt: '2026-02-26T12:00:00Z',
-  updatedAt: '2026-02-26T12:25:00Z',
-};

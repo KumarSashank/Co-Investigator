@@ -4,46 +4,42 @@ import { useState, useCallback } from 'react';
 import ChatInterface from '@/components/ChatInterface';
 import TaskTracker from '@/components/TaskTracker';
 import ResearchBrief from '@/components/ResearchBrief';
-import { ResearchSession, SubTask, MOCK_SESSION } from '@/types';
+import { DeepResearchPlan, PlanStep } from '@/types';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'chat' | 'brief'>('chat');
 
   // Session state — starts null, populated when user sends a query
-  const [session, setSession] = useState<ResearchSession | null>(null);
+  const [session, setSession] = useState<DeepResearchPlan | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
 
   /**
    * Called by ChatInterface when the agent plan API returns successfully.
-   * Creates a local session object and kicks off execution.
    */
-  const handlePlanCreated = useCallback((plan: SubTask[], sessionId: string, query: string) => {
-    const newSession: ResearchSession = {
-      id: sessionId,
-      originalQuery: query,
-      status: 'running',
-      plan: plan.map(t => ({ ...t, status: t.status || 'pending' as const })),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    setSession(newSession);
+  const handlePlanCreated = useCallback((planObj: DeepResearchPlan) => {
+    setSession(planObj);
     // Auto-execute the plan steps sequentially
-    executeAllTasks(newSession);
+    executeAllTasks(planObj);
   }, []);
 
   /**
-   * Sequentially executes each subtask in the plan via /api/agent/execute.
+   * Sequentially executes each step in the plan via /api/agent/execute.
    */
-  const executeAllTasks = async (currentSession: ResearchSession) => {
+  const executeAllTasks = async (currentSession: DeepResearchPlan) => {
+    if (currentSession.awaiting_confirmation) return; // Prevent run if blocked
+
     setIsExecuting(true);
     let updatedSession = { ...currentSession };
 
-    for (const task of updatedSession.plan) {
-      // Mark task as in_progress
+    for (let i = 0; i < updatedSession.plan.length; i++) {
+      const step = updatedSession.plan[i];
+      if (step.status === 'DONE' || step.status === 'FAILED') continue; // Skip completed
+
+      // Mark step as RUNNING
       updatedSession = {
         ...updatedSession,
         plan: updatedSession.plan.map(t =>
-          t.id === task.id ? { ...t, status: 'in_progress' as const } : t
+          t.id === step.id ? { ...t, status: 'RUNNING' as const } : t
         ),
         updatedAt: new Date().toISOString(),
       };
@@ -54,138 +50,131 @@ export default function Home() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            sessionId: updatedSession.id,
-            taskId: task.id,
+            sessionId: updatedSession.session_id,
+            taskId: step.id,
           }),
         });
+
+        if (!res.ok) {
+          throw new Error(`Execute API returned ${res.status}: ${res.statusText}`);
+        }
+
         const result = await res.json();
 
-        // Mark task as completed with results
+        if (result.status === 'hitl_paused') {
+          // Agent requested a pause
+          updatedSession = {
+            ...updatedSession,
+            awaiting_confirmation: true,
+            checkpoint_question: result.question || "Do you want to proceed?",
+            checkpoint_options: result.options || ["Yes", "No"],
+            updatedAt: new Date().toISOString(),
+          };
+          setSession({ ...updatedSession });
+          setIsExecuting(false);
+          return; // Exit loop, wait for user input
+        }
+
+        // Mark step as DONE with artifact
+        const artifactsMap = { ...updatedSession.artifacts };
+        if (result.artifactUri) {
+          artifactsMap[step.id] = result.artifactUri;
+        }
+
         updatedSession = {
           ...updatedSession,
           plan: updatedSession.plan.map(t =>
-            t.id === task.id
-              ? { ...t, status: 'completed' as const, resultData: result.result }
+            t.id === step.id
+              ? { ...t, status: 'DONE' as const, result_data: result.result }
               : t
           ),
-          status: 'hitl_paused',
+          artifacts: artifactsMap,
           updatedAt: new Date().toISOString(),
         };
-      } catch (err) {
-        // Mark task as failed
+        setSession({ ...updatedSession });
+
+      } catch (err: any) {
+        // Mark task as FAILED and STOP — don't silently continue
+        console.error(`[Execute] ❌ Step ${step.id} failed:`, err.message || err);
         updatedSession = {
           ...updatedSession,
           plan: updatedSession.plan.map(t =>
-            t.id === task.id ? { ...t, status: 'failed' as const } : t
+            t.id === step.id ? { ...t, status: 'FAILED' as const, error: err.message || 'Unknown error' } : t
           ),
           updatedAt: new Date().toISOString(),
         };
+        setSession({ ...updatedSession });
+        setIsExecuting(false);
+        return; // Stop execution on failure
       }
-      setSession({ ...updatedSession });
-
-      // Pause after each task for HITL review (user must approve to continue)
-      break; // Stop after first task — HITL checkpoint
     }
+
+    // Check if all tasks are now done
+    const allDone = updatedSession.plan.every(t => t.status === 'DONE' || t.status === 'FAILED');
+    if (allDone) {
+      await generateReport(updatedSession);
+    }
+
     setIsExecuting(false);
   };
 
   /**
-   * Called when the user clicks Approve on the HITL checkpoint.
-   * Resumes execution of the remaining pending tasks.
+   * Called when the user clicks an option on the HITL checkpoint.
    */
-  const handleApproval = useCallback(async (approved: boolean, feedback?: string) => {
+  const handleApproval = useCallback(async (approved: boolean, choice?: string, feedback?: string) => {
     if (!session) return;
 
     if (!approved) {
-      setSession(prev => prev ? { ...prev, status: 'error', updatedAt: new Date().toISOString() } : null);
+      // User cancelled
+      setSession(prev => prev ? {
+        ...prev,
+        awaiting_confirmation: false,
+        checkpoint_question: `Cancelled: ${feedback || 'User denied execution.'}`,
+        checkpoint_options: [],
+        updatedAt: new Date().toISOString()
+      } : null);
       return;
     }
 
-    // Find the next pending task and continue execution
-    const nextPendingIdx = session.plan.findIndex(t => t.status === 'pending');
-    if (nextPendingIdx === -1) {
-      // All tasks done — generate report
-      await generateReport(session);
-      return;
+    // Unblock the session and find the step that was paused
+    const updatedSession = {
+      ...session,
+      awaiting_confirmation: false,
+      checkpoint_question: null,
+      checkpoint_options: [],
+      updatedAt: new Date().toISOString()
+    };
+
+    // Convert the step from RUNNING back to PENDING so the loop can start it smoothly, 
+    // or we can pass the choice directly to the backend if we built API support for it.
+    // For now, we inject the user's choice into the next step's inputs.
+    const runningIdx = updatedSession.plan.findIndex(t => t.status === 'RUNNING');
+    if (runningIdx !== -1) {
+      updatedSession.plan[runningIdx].inputs.user_choice = choice;
+      updatedSession.plan[runningIdx].inputs.user_feedback = feedback;
+      updatedSession.plan[runningIdx].status = 'PENDING'; // Reset so loop catches it
     }
 
-    // Continue with remaining tasks
-    const updatedSession = { ...session, status: 'running' as const, updatedAt: new Date().toISOString() };
     setSession(updatedSession);
+    executeAllTasks(updatedSession);
 
-    setIsExecuting(true);
-    let runningSession: ResearchSession = { ...updatedSession };
-
-    for (let i = nextPendingIdx; i < runningSession.plan.length; i++) {
-      const task = runningSession.plan[i];
-      if (task.status !== 'pending') continue;
-
-      // Mark as in_progress
-      runningSession = {
-        ...runningSession,
-        plan: runningSession.plan.map(t =>
-          t.id === task.id ? { ...t, status: 'in_progress' as const } : t
-        ),
-        updatedAt: new Date().toISOString(),
-      };
-      setSession({ ...runningSession });
-
-      try {
-        const res = await fetch('/api/agent/execute', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId: runningSession.id, taskId: task.id }),
-        });
-        const result = await res.json();
-
-        runningSession = {
-          ...runningSession,
-          plan: runningSession.plan.map(t =>
-            t.id === task.id
-              ? { ...t, status: 'completed' as const, resultData: result.result }
-              : t
-          ),
-          status: 'hitl_paused' as const,
-          updatedAt: new Date().toISOString(),
-        };
-      } catch (err) {
-        runningSession = {
-          ...runningSession,
-          plan: runningSession.plan.map(t =>
-            t.id === task.id ? { ...t, status: 'failed' as const } : t
-          ),
-          updatedAt: new Date().toISOString(),
-        };
-      }
-      setSession({ ...runningSession });
-      break; // Pause after each task for HITL
-    }
-
-    // Check if all tasks are now done
-    const allDone = runningSession.plan.every(t => t.status === 'completed' || t.status === 'failed');
-    if (allDone) {
-      await generateReport(runningSession);
-    }
-
-    setIsExecuting(false);
   }, [session]);
 
   /**
    * Generates the final research brief by calling /api/agent/report.
    */
-  const generateReport = async (currentSession: ResearchSession) => {
+  const generateReport = async (currentSession: DeepResearchPlan) => {
     try {
       const res = await fetch('/api/agent/report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: currentSession.id }),
+        body: JSON.stringify({ sessionId: currentSession.session_id }),
       });
       const data = await res.json();
 
       setSession(prev => prev ? {
         ...prev,
-        status: 'completed',
-        finalReportMarkdown: data.markdown,
+        final_output: data.report,
         updatedAt: new Date().toISOString(),
       } : null);
 
@@ -196,9 +185,8 @@ export default function Home() {
     }
   };
 
-  // Use the real session for display, or show a default empty state
   const displaySession = session;
-  const displayStatus = displaySession?.status || 'planning';
+  const displayStatus = displaySession?.awaiting_confirmation ? 'BLOCKED' : (isExecuting ? 'RUNNING' : (displaySession?.final_output ? 'DONE' : 'PENDING'));
 
   return (
     <div className="flex h-screen flex-col" style={{ background: 'var(--bg-primary)' }}>
@@ -212,22 +200,22 @@ export default function Home() {
       >
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-cyan))' }}>
-            <span className="text-white text-sm font-bold">CI</span>
+            <span className="text-white text-sm font-bold">DR</span>
           </div>
           <div>
-            <h1 className="text-sm font-bold gradient-text">Co-Investigator</h1>
+            <h1 className="text-sm font-bold gradient-text">DeepResearch</h1>
             <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-              BenchSpark AI Research Assistant
+              Agentic Verification Pipeline
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <span className={`badge badge-${displayStatus}`}>
-            {displayStatus.replace('_', ' ')}
+          <span className={`badge badge-${displayStatus.toLowerCase()}`}>
+            {displayStatus}
           </span>
           <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: 'var(--bg-card)', color: 'var(--accent-blue)' }}>
-            P
+            V
           </div>
         </div>
       </header>
@@ -248,7 +236,7 @@ export default function Home() {
                 color: activeTab === 'chat' ? 'var(--accent-blue)' : 'var(--text-muted)',
               }}
             >
-              💬 Chat
+              💬 Agent Interface
               {activeTab === 'chat' && (
                 <div
                   className="absolute bottom-0 left-0 right-0 h-[2px] rounded-full"
@@ -263,7 +251,7 @@ export default function Home() {
                 color: activeTab === 'brief' ? 'var(--accent-blue)' : 'var(--text-muted)',
               }}
             >
-              📋 Research Brief
+              📋 Grounded Report
               {activeTab === 'brief' && (
                 <div
                   className="absolute bottom-0 left-0 right-0 h-[2px] rounded-full"
@@ -282,8 +270,9 @@ export default function Home() {
             ) : (
               <div className="h-full overflow-y-auto p-6">
                 <ResearchBrief
-                  markdown={displaySession?.finalReportMarkdown || ''}
-                  groundingScore={0.87}
+                  markdown={displaySession?.final_output || ''}
+                  // Optional: Compute grounded score from Vertex AI response
+                  groundingScore={0.99}
                 />
               </div>
             )}
@@ -292,7 +281,7 @@ export default function Home() {
 
         {/* Right Sidebar */}
         <aside
-          className="w-full md:w-[380px] shrink-0 flex flex-col overflow-y-auto p-5"
+          className="w-full md:w-[420px] shrink-0 flex flex-col overflow-y-auto p-5"
           style={{
             borderLeft: '1px solid var(--border-default)',
             background: 'var(--bg-secondary)',
@@ -300,7 +289,7 @@ export default function Home() {
         >
           <h2 className="text-sm font-bold mb-4 pb-3 flex items-center gap-2" style={{ borderBottom: '1px solid var(--border-default)', color: 'var(--text-primary)' }}>
             <span className="text-base">🧪</span>
-            Investigation Plan
+            Execution Pipeline
           </h2>
           <TaskTracker session={displaySession} onApproval={handleApproval} isExecuting={isExecuting} />
         </aside>

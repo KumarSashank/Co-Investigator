@@ -1,86 +1,152 @@
 import { NextResponse } from 'next/server';
-import { VertexAI } from '@google-cloud/vertexai';
+import { VertexAI, Schema } from '@google-cloud/vertexai';
 import { createSession } from '@/lib/firestore/stateEngine';
-import { SubTask } from '@/types';
+import { DeepResearchPlan } from '@/types';
 
 // Initialize Vertex AI
-// NOTE: Ensure process.env.GOOGLE_CLOUD_PROJECT is set or ADC is configured via gcp-login.sh
 const vertexAI = new VertexAI({
     project: process.env.GOOGLE_CLOUD_PROJECT || 'benchspark-hackathon-default',
     location: 'us-central1'
 });
 
 const generativeModel = vertexAI.getGenerativeModel({
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     generationConfig: {
         responseMimeType: 'application/json',
+        // Optional schema enforcement can be added here if desired.
+        // We rely on strong prompting to enforce the Plan DSL.
     }
 });
 
+const SYSTEM_INSTRUCTION = `
+You are Co-Investigator, an agentic AI Research Assistant that operates like a high-level research intern.
+Your job is to turn a natural language research request into a multi-step, event-driven workflow, execute it using tools, track state, and ask for user confirmation at least once before proceeding to expensive or ambiguous steps.
+
+Core principles:
+- Be dynamic: do not use a fixed workflow. Create a plan tailored to the user’s query.
+- Be auditable: always show your plan and step status (DONE / RUNNING / BLOCKED / PENDING).
+- Be grounded: when a claim depends on internal knowledge, retrieve supporting passages using Vertex AI Search.
+- Be careful: never fabricate citations, authors, emails, affiliations, or statistics. If data is missing, say so.
+- Be interactive: insert at least one Human-in-the-Loop checkpoint where you pause and ask what to do next.
+- Be stateful: store and update your plan, step status, and artifacts in Firestore for each session_id.
+
+Available tools (you MUST use them, not guess):
+1) vertex_search_retrieve(query, filters?) -> returns passages with source ids/urls/snippets
+2) openalex_search_authors(query, from_year?, to_year?, keywords?) -> returns candidate researchers with ids, works_count, cited_by_count, recent_works
+3) openalex_get_author(author_id) -> returns author profile + affiliations + works timeline
+4) pubmed_search(query, from_year?, to_year?) -> returns PMIDs + metadata
+5) pubmed_fetch(pmids) -> returns detailed records including authors, affiliations, corresponding author info when available
+6) firestore_get_session(session_id)
+7) firestore_upsert_session(session_id, patch_object)
+8) gcs_write(path, content_json_or_text) -> returns gs:// path
+9) hitl_pause(session_id, question, options[]) -> marks session awaiting_confirmation and returns control to user
+10) bigquery(disease_id) -> query hackathon BigQuery datasets for disease targets
+
+Workflow requirements:
+- Generate a plan with 2–6 steps (typically 3–5). Each step must be executable with the available tools.
+- At minimum, support these intents when relevant: (a) disease grounding/synthesis, (b) researcher identification, (c) activity/recency verification, (d) contact discovery, (e) final report.
+- Execute steps sequentially, updating Firestore after each step.
+- Insert a HITL checkpoint after initial grounding/candidate identification OR before running expensive per-author verification.
+- When awaiting confirmation, STOP and do not continue until the user responds.
+
+HITL checkpoint requirements:
+- Your execution pipeline is linear. Do NOT offer branching choices (A, B, C, D).
+- The HITL checkpoint is meant to ensure human oversight before expensive operations or to allow the user to inject constraints.
+- Pause and ask the user to review the current findings and confirm if they want to proceed with the next planned step.
+- Example: "I found 10 candidate researchers based on your query. Please review their initial metrics above. Do you want me to proceed with extracting their detailed citations and contact info?"
+- In the \`inputs.options\` array for the \`hitl_pause\` tool, provide linear progress options like: ["Approve & Proceed", "Cancel Execution"].
+
+Plan DSL (ALWAYS output and store this exact valid JSON structure):
+{
+  "session_id": "WILL_BE_FILLED_BY_BACKEND",
+  "user_request": "<original request>",
+  "plan": [
+    {
+      "id": "S1",
+      "name": "<step name>",
+      "intent": "<retrieve|rank|verify|extract|synthesize|other>",
+      "tools": ["<tool_name>", "..."],
+      "inputs": {"key": "value"},
+      "expected_output": ["bullet list of artifacts/fields"],
+      "status": "PENDING",
+      "notes": ""
+    }
+  ],
+  "awaiting_confirmation": false,
+  "checkpoint_question": null,
+  "artifacts": {},
+  "final_output": null
+}
+`;
+
 /**
  * POST /api/agent/plan
- * Takes a user research query and returns a synthesized execution plan.
+ * Takes a user research query and returns a synthesized DeepResearch execution plan.
  */
 export async function POST(req: Request) {
+    console.log(`\n${'═'.repeat(60)}`);
+    console.log('🧠 [Plan] POST /api/agent/plan - Upgraded DeepResearch Agent');
     try {
         const { query } = await req.json();
+        console.log(`🧠 [Plan] Query: "${query}"`);
 
         if (!query) {
             return NextResponse.json({ error: 'Research query is required' }, { status: 400 });
         }
 
-        const systemInstruction = `
-      You are a high-level preclinical research intern (Co-Investigator).
-      Your job is to break down complex research queries into 2-3 executable sub-tasks.
-      
-      You have access to the following tools:
-      1. 'bigquery' - For querying public biomedical data, diseases, and gene targets.
-      2. 'openalex' - For finding researcher citation and publication metrics.
-      3. 'pubmed' - For fetching recent biomedical literature and abstracts.
-      
-      Output exactly a JSON array of tasks matching this TypeScript interface:
-      Array<{
-        id: string; // e.g., "step-1"
-        description: string; // e.g., "Query BigQuery for IPF targets"
-        toolToUse: 'bigquery' | 'openalex' | 'pubmed' | 'none';
-        status: 'pending';
-      }>
-    `;
-
         const requestBody = {
-            contents: [{ role: 'user', parts: [{ text: query }] }],
-            systemInstruction: { role: 'system' as const, parts: [{ text: systemInstruction }] }
+            contents: [{ role: 'user', parts: [{ text: `Create a research plan for the following request using the required Plan DSL: "${query}"` }] }],
+            systemInstruction: { role: 'system' as const, parts: [{ text: SYSTEM_INSTRUCTION }] }
         };
 
+        console.log(`🧠 [Plan] Calling Gemini 2.5 Flash...`);
         const response = await generativeModel.generateContent(requestBody);
 
-        // Safety check parsing
-        const candidateText = response.response.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
-        let plan: SubTask[] = [];
+        const candidateText = response.response.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+        let parsedPlan: any = {};
         try {
-            plan = JSON.parse(candidateText);
+            parsedPlan = JSON.parse(candidateText);
         } catch (e) {
-            console.error("Failed to parse Vertex API response", candidateText);
-            return NextResponse.json({ error: 'Failed to generate a valid plan' }, { status: 500 });
+            console.error("🧠 [Plan] ❌ Failed to parse Vertex API response as JSON:", candidateText);
+            return NextResponse.json({ error: 'Failed to generate a valid plan JSON' }, { status: 500 });
         }
 
-        // Persist the session to Firestore and get the session ID
+        // Validate structure loosely
+        if (!parsedPlan.plan || !Array.isArray(parsedPlan.plan)) {
+            console.error("🧠 [Plan] ❌ Invalid Plan DSL: Missing 'plan' array");
+            return NextResponse.json({ error: 'Invalid Plan DSL generated' }, { status: 500 });
+        }
+
+        // Determine if there's a HITL step defined (to pre-set state if needed, though usually it happens during execution)
+        const hasHitl = parsedPlan.plan.some((s: any) => s.tools.includes('hitl_pause'));
+        if (hasHitl) {
+            console.log(`🧠 [Plan] ✅ Plan includes explicit HITL checkpoint`);
+        }
+
+        // Persist the session to Firestore (or in-memory mock) and get the session ID
         let sessionId: string | null = null;
         try {
-            sessionId = await createSession(query, plan);
+            // Note: createSession sets up the DeepResearchPlan object
+            sessionId = await createSession(query, parsedPlan.plan);
+            parsedPlan.session_id = sessionId;
+            parsedPlan.user_request = query;
         } catch (firestoreError) {
-            console.warn('Firestore save failed (continuing without persistence):', firestoreError);
+            console.warn('🧠 [Plan] ⚠️ State engine save failed (continuing without persistence):', firestoreError);
             sessionId = `local-${Date.now()}`;
+            parsedPlan.session_id = sessionId;
         }
+
+        console.log(`🧠 [Plan] ✅ Successfully created plan with ${parsedPlan.plan.length} steps. Session ID: ${sessionId}`);
+        console.log(`${'═'.repeat(60)}\n`);
 
         return NextResponse.json({
             status: 'success',
             sessionId,
-            plan: plan
+            plan: parsedPlan
         });
 
     } catch (error: any) {
-        console.error('Agent Planning Error:', error);
+        console.error('🧠 [Plan] ❌ FATAL ERROR:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }

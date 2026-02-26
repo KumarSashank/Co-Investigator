@@ -1,25 +1,30 @@
 'use client';
 
 import { useState } from 'react';
-import { ResearchSession, SubTask } from '@/types';
+import { DeepResearchPlan, PlanStep } from '@/types';
 
 const STATUS_CONFIG: Record<string, { icon: string; label: string; dotClass: string }> = {
-    completed: { icon: '✓', label: 'Completed', dotClass: 'bg-[var(--accent-green)]' },
-    in_progress: { icon: '►', label: 'In Progress', dotClass: 'bg-[var(--accent-blue)] animate-pulse-soft' },
-    pending: { icon: '○', label: 'Pending', dotClass: 'bg-[var(--text-muted)]' },
-    failed: { icon: '✕', label: 'Failed', dotClass: 'bg-[var(--accent-red)]' },
+    DONE: { icon: '✓', label: 'Done', dotClass: 'bg-[var(--accent-green)]' },
+    RUNNING: { icon: '►', label: 'Running', dotClass: 'bg-[var(--accent-blue)] animate-pulse-soft' },
+    PENDING: { icon: '○', label: 'Pending', dotClass: 'bg-[var(--text-muted)]' },
+    FAILED: { icon: '✕', label: 'Failed', dotClass: 'bg-[var(--accent-red)]' },
+    BLOCKED: { icon: '⏸', label: 'Paused', dotClass: 'bg-[var(--accent-amber)]' },
 };
 
 const TOOL_ICONS: Record<string, string> = {
     bigquery: '🗄️',
-    pubmed: '📄',
-    openalex: '🔬',
+    pubmed_search: '📄',
+    pubmed_fetch: '📄',
+    openalex_search_authors: '🔬',
+    openalex_get_author: '🔬',
+    vertex_search_retrieve: '🔍',
+    hitl_pause: '⏸️',
     none: '🤖',
 };
 
 interface TaskTrackerProps {
-    session: ResearchSession | null;
-    onApproval: (approved: boolean, feedback?: string) => void;
+    session: DeepResearchPlan | null;
+    onApproval: (approved: boolean, choice?: string, feedback?: string) => void;
     isExecuting: boolean;
 }
 
@@ -41,16 +46,16 @@ export default function TaskTracker({ session, onApproval, isExecuting }: TaskTr
     }
 
     const plan = session.plan;
-    const completedCount = plan.filter((t) => t.status === 'completed').length;
+    const completedCount = plan.filter((t) => t.status === 'DONE').length;
     const progress = Math.round((completedCount / plan.length) * 100);
 
-    const handleApprove = () => {
-        onApproval(true, feedback || undefined);
+    const handleOptionSelect = (choice: string) => {
+        onApproval(true, choice, feedback || undefined);
         setFeedback('');
     };
 
     const handleDeny = () => {
-        onApproval(false, feedback || undefined);
+        onApproval(false, undefined, feedback || undefined);
         setFeedback('');
     };
 
@@ -60,14 +65,14 @@ export default function TaskTracker({ session, onApproval, isExecuting }: TaskTr
             <div className="glass-card p-4 space-y-3">
                 <div className="flex items-center justify-between">
                     <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                        {session.id}
+                        {session.session_id}
                     </span>
-                    <span className={`badge badge-${session.status}`}>
-                        {session.status.replace('_', ' ')}
+                    <span className={`badge badge-${session.awaiting_confirmation ? 'BLOCKED' : 'RUNNING'}`}>
+                        {session.awaiting_confirmation ? 'HITL PAUSED' : (isExecuting ? 'ACTIVE' : 'IDLE')}
                     </span>
                 </div>
                 <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                    {session.originalQuery}
+                    {session.user_request}
                 </p>
 
                 {/* Progress Bar */}
@@ -91,38 +96,54 @@ export default function TaskTracker({ session, onApproval, isExecuting }: TaskTr
             {/* Task List */}
             <div className="relative space-y-0">
                 {plan.map((task, idx) => (
-                    <TaskCard key={task.id} task={task} index={idx} isLast={idx === plan.length - 1} />
+                    <TaskCard key={task.id} task={task} index={idx} isLast={idx === plan.length - 1} artifacts={session.artifacts} />
                 ))}
             </div>
 
-            {/* HITL Checkpoint */}
-            {session.status === 'hitl_paused' && !isExecuting && (
+            {/* HITL Checkpoint - Dynamic Rendering */}
+            {session.awaiting_confirmation && !isExecuting && (
                 <div className="hitl-card p-5 space-y-3">
                     <div className="flex items-center gap-2 mb-1">
                         <span className="text-lg">⚠️</span>
                         <h3 className="text-sm font-semibold" style={{ color: 'var(--accent-amber)' }}>
-                            Human-in-the-Loop Checkpoint
+                            Human-in-the-Loop Override
                         </h3>
                     </div>
-                    <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                        {completedCount < plan.length
-                            ? `Step ${completedCount} completed. Review the results above and approve to continue with the remaining ${plan.length - completedCount} step(s).`
-                            : 'All steps completed. Approve to generate the final research brief.'}
+                    <p className="text-xs leading-relaxed font-bold" style={{ color: 'var(--text-primary)' }}>
+                        {session.checkpoint_question || "Agent halted for review. Do you want to proceed?"}
                     </p>
                     <textarea
                         value={feedback}
                         onChange={(e) => setFeedback(e.target.value)}
-                        placeholder="Optional: Add feedback or constraints..."
+                        placeholder="Optional constraints (e.g. 'Only include researchers in Europe')"
                         className="input-glow w-full px-3 py-2 rounded-lg text-xs resize-none h-16"
                         style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                     />
-                    <div className="flex gap-2">
-                        <button onClick={handleApprove} className="btn-approve flex-1 text-sm py-2.5 rounded-lg">
-                            ✓ Approve & Continue
-                        </button>
-                        <button onClick={handleDeny} className="btn-deny flex-1 text-sm py-2.5 rounded-lg">
-                            ✕ Deny
-                        </button>
+
+                    <div className="flex flex-col gap-2 mt-2">
+                        {session.checkpoint_options && session.checkpoint_options.length > 0 ? (
+                            // Dynamic Multiple Choice
+                            session.checkpoint_options.map((opt, i) => (
+                                <button key={i} onClick={() => handleOptionSelect(opt)} className="btn-approve text-left text-xs py-2 px-3 rounded-lg border border-[var(--border-accent)]">
+                                    {opt}
+                                </button>
+                            ))
+                        ) : (
+                            // Fallback yes/no
+                            <div className="flex gap-2">
+                                <button onClick={() => handleOptionSelect('Approve')} className="btn-approve flex-1 text-sm py-2.5 rounded-lg">
+                                    ✓ Approve & Continue
+                                </button>
+                                <button onClick={handleDeny} className="btn-deny flex-1 text-sm py-2.5 rounded-lg">
+                                    ✕ Stop Sequence
+                                </button>
+                            </div>
+                        )}
+                        {session.checkpoint_options?.length! > 0 && (
+                            <button onClick={handleDeny} className="btn-deny w-full text-xs py-2 rounded-lg mt-2">
+                                🛑 Cancel Execution
+                            </button>
+                        )}
                     </div>
                 </div>
             )}
@@ -144,9 +165,9 @@ export default function TaskTracker({ session, onApproval, isExecuting }: TaskTr
     );
 }
 
-function TaskCard({ task, index, isLast }: { task: SubTask; index: number; isLast: boolean }) {
-    const config = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
-    const toolIcon = TOOL_ICONS[task.toolToUse] || '🤖';
+function TaskCard({ task, index, isLast, artifacts }: { task: PlanStep; index: number; isLast: boolean, artifacts: Record<string, string> }) {
+    const config = STATUS_CONFIG[task.status] || STATUS_CONFIG.PENDING;
+    const isRunning = task.status === 'RUNNING';
 
     return (
         <div
@@ -158,7 +179,7 @@ function TaskCard({ task, index, isLast }: { task: SubTask; index: number; isLas
                 <div
                     className="absolute left-[14px] top-[30px] bottom-0 w-[2px]"
                     style={{
-                        background: task.status === 'completed' ? 'var(--accent-green)' : 'var(--border-default)',
+                        background: task.status === 'DONE' ? 'var(--accent-green)' : 'var(--border-default)',
                     }}
                 />
             )}
@@ -172,58 +193,43 @@ function TaskCard({ task, index, isLast }: { task: SubTask; index: number; isLas
 
             {/* Card */}
             <div
-                className={`glass-card glass-card-hover p-3.5 animate-fade-in ${task.status === 'in_progress' ? 'animate-glow-pulse' : ''
+                className={`glass-card glass-card-hover p-3.5 animate-fade-in ${isRunning ? 'animate-glow-pulse' : ''
                     }`}
                 style={{
-                    borderColor: task.status === 'in_progress' ? 'var(--border-accent)' : undefined,
+                    borderColor: isRunning ? 'var(--border-accent)' : undefined,
                 }}
             >
                 <div className="flex items-start justify-between gap-2">
                     <p className="text-xs font-medium leading-snug" style={{ color: 'var(--text-primary)' }}>
-                        {task.description}
+                        {task.name}
                     </p>
-                    <span className={`badge badge-${task.status} shrink-0`}>
+                    <span className={`badge badge-${task.status.toLowerCase()} shrink-0`}>
                         {config.label}
                     </span>
                 </div>
-                <div className="flex items-center gap-2 mt-2">
-                    <span className="text-sm">{toolIcon}</span>
-                    <span
-                        className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-                        style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}
-                    >
-                        {task.toolToUse}
-                    </span>
-                    <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>
-                        Step {index + 1}
+
+                {/* Tools Listed */}
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    {task.tools.map((t, ti) => (
+                        <span key={ti}
+                            className="flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded border border-[var(--border-default)]"
+                            style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}
+                        >
+                            {TOOL_ICONS[t] || '⚙️'} {t}
+                        </span>
+                    ))}
+                    <span className="text-[9px] ml-auto font-bold uppercase" style={{ color: 'var(--accent-blue)' }}>
+                        {task.intent}
                     </span>
                 </div>
 
-                {/* Show result summary if completed */}
-                {task.status === 'completed' && task.resultData && (
-                    <div
-                        className="mt-2.5 pt-2.5 text-[10px] leading-relaxed"
-                        style={{ borderTop: '1px solid var(--border-default)', color: 'var(--text-muted)' }}
-                    >
-                        {task.resultData.associatedTargets && (
-                            <span>
-                                Found {task.resultData.associatedTargets.length} targets •{' '}
-                                {task.resultData.pathways?.length || 0} pathways
-                            </span>
-                        )}
-                        {task.resultData.displayName && (
-                            <span>
-                                Researcher: {task.resultData.displayName} • h-index: {task.resultData.metrics?.hIndex || 'N/A'}
-                            </span>
-                        )}
-                        {Array.isArray(task.resultData) && task.resultData.length > 0 && (
-                            <span>
-                                Found {task.resultData.length} publications
-                            </span>
-                        )}
-                        {task.resultData.message && (
-                            <span>{task.resultData.message}</span>
-                        )}
+                {/* Show GCS Artifact Link if available */}
+                {artifacts && artifacts[task.id] && (
+                    <div className="mt-2.5 pt-2 flex items-center gap-2" style={{ borderTop: '1px solid var(--border-default)' }}>
+                        <span className="text-[12px]">📦</span>
+                        <span className="text-[9px] font-mono truncate hover:text-white cursor-pointer transition-colors" style={{ color: 'var(--text-muted)' }}>
+                            {artifacts[task.id]}
+                        </span>
                     </div>
                 )}
             </div>

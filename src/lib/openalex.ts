@@ -1,204 +1,212 @@
-import { OpenAlexAuthorResponse } from './types';
+import { OpenAlexAuthorResponse, ActivityLevel } from './types';
+import { logger } from './logger';
 
 const LOG_PREFIX = '🔬 [OpenAlex]';
 
 /**
- * Fetches author data from OpenAlex.
- * Smart routing: if the input looks like a research query (contains spaces + common words),
- * it searches by topic/concept first, then finds the top author.
- * If it looks like an author name, it searches directly.
+ * Normalizes a purely numeric value against an assumed max scale (e.g., 100 for works, 10k for citations)
+ * Ensures standard 0-1 range for the scoring algorithm.
  */
-export async function fetchAuthorFromOpenAlex(searchTerm: string): Promise<OpenAlexAuthorResponse> {
-    console.log(`${LOG_PREFIX} Input: "${searchTerm}"`);
-
-    // Detect if this is a research query vs an actual author name
-    const queryWords = ['find', 'search', 'experts', 'published', 'research', 'treatment', 'disease', 'study', 'who', 'what', 'how'];
-    const isResearchQuery = queryWords.some(w => searchTerm.toLowerCase().includes(w)) || searchTerm.split(' ').length > 4;
-
-    if (isResearchQuery) {
-        console.log(`${LOG_PREFIX} Detected research query — searching by topic/works instead of author name`);
-        return searchByTopic(searchTerm);
-    } else {
-        console.log(`${LOG_PREFIX} Detected author name — searching directly`);
-        return searchByAuthorName(searchTerm);
-    }
+export function normalize(val: number, assumedMax: number): number {
+    return Math.min(val / assumedMax, 1.0);
 }
 
 /**
- * Searches OpenAlex works by topic to find the most prolific author.
+ * Calculates a recency score. 
+ * Current year gets 1.0, minus 0.2 for each year older.
  */
-async function searchByTopic(query: string): Promise<OpenAlexAuthorResponse> {
-    // Extract meaningful keywords (remove common research query words)
-    const stopWords = ['find', 'search', 'for', 'experts', 'on', 'who', 'have', 'published', 'the', 'in', 'last', 'years', 'a', 'an', 'about', 'research', 'researchers'];
-    const keywords = query.split(/\s+/)
-        .filter(w => !stopWords.includes(w.toLowerCase()) && w.length > 2)
-        .join(' ');
-    console.log(`${LOG_PREFIX} Extracted keywords: "${keywords}"`);
+export function calculateRecencyScore(lastYear: number, currentYear: number = new Date().getFullYear()): number {
+    if (lastYear === 0) return 0;
+    const diff = currentYear - lastYear;
+    return Math.max(1.0 - (diff * 0.2), 0);
+}
 
-    const worksUrl = `https://api.openalex.org/works?search=${encodeURIComponent(keywords)}&sort=cited_by_count:desc&per_page=10`;
-    console.log(`${LOG_PREFIX} Works search URL: ${worksUrl}`);
+/**
+ * Determines exact activity level based on DeepResearch requirement:
+ * ACTIVE: >=3 relevant works in last 3 years OR last relevant work within 12 months
+ * MODERATE: 1–2 relevant works in last 3 years OR last relevant work within 24 months
+ * LOW: none in last 3 years OR last relevant work older than 24 months
+ */
+export function determineActivityLevel(worksLast3Years: number, lastWorkYear: number, currentYear: number = new Date().getFullYear()): ActivityLevel {
+    const monthsSinceLastWork = (currentYear - lastWorkYear) * 12;
+
+    if (worksLast3Years >= 3 || monthsSinceLastWork <= 12) {
+        return 'ACTIVE';
+    } else if ((worksLast3Years >= 1 && worksLast3Years <= 2) || monthsSinceLastWork <= 24) {
+        return 'MODERATE';
+    }
+    return 'LOW';
+}
+
+/**
+ * openalex_search_authors(query, from_year?, to_year?, keywords?)
+ * Returns candidate researchers with ids, works_count, cited_by_count, recent_works
+ */
+export async function openalex_search_authors(query: string, from_year?: number, to_year?: number, keywords?: string[]): Promise<OpenAlexAuthorResponse[]> {
+    logger.info({ query, from_year, to_year, keywords }, `${LOG_PREFIX} openalex_search_authors called`);
+
+    // We do a works search by topic to identify top active authors, similar to our previous logic but scaled out
+    const searchTerms = keywords && keywords.length > 0 ? keywords.join(' ') : query;
+    let url = `https://api.openalex.org/works?search=${encodeURIComponent(searchTerms)}&sort=cited_by_count:desc&per_page=50`;
+
+    if (from_year) {
+        url += `&filter=publication_year:>${from_year - 1}`;
+    }
 
     try {
-        const res = await fetch(worksUrl, {
-            headers: { 'User-Agent': 'benchspark-co-investigator/1.0 (mailto:benchspark@example.com)' }
+        const res = await fetch(url, {
+            headers: { 'User-Agent': 'benchspark-co-investigator/2.0 (mailto:benchspark@example.com)' }
         });
-        console.log(`${LOG_PREFIX} Works response: ${res.status}`);
 
         if (!res.ok) throw new Error(`OpenAlex works search failed: ${res.status}`);
         const data = await res.json();
 
         if (!data.results || data.results.length === 0) {
-            console.warn(`${LOG_PREFIX} ⚠️ No works found for keywords: "${keywords}"`);
-            throw new Error('No works found');
+            logger.warn(`${LOG_PREFIX} No works found for: "${searchTerms}"`);
+            return [];
         }
 
-        console.log(`${LOG_PREFIX} Found ${data.results.length} works`);
+        // Aggregate Authors
+        const authorMap = new Map<string, any>();
+        const currentYear = new Date().getFullYear();
 
-        // Count author appearances to find the most prolific
-        const authorCounts: Record<string, { id: string; name: string; count: number; institution: string }> = {};
         for (const work of data.results) {
+            const pubYear = work.publication_year || 0;
+            // Count citations and works for authors of these papers
             for (const authorship of (work.authorships || [])) {
                 const author = authorship.author;
-                if (author?.id) {
-                    if (!authorCounts[author.id]) {
-                        authorCounts[author.id] = {
-                            id: author.id,
-                            name: author.display_name,
-                            count: 0,
-                            institution: authorship.institutions?.[0]?.display_name || 'Unknown'
-                        };
-                    }
-                    authorCounts[author.id].count++;
+                if (!author?.id) continue;
+
+                if (!authorMap.has(author.id)) {
+                    authorMap.set(author.id, {
+                        ...author,
+                        institution: authorship.institutions?.[0]?.display_name || 'Unknown',
+                        localWorksCount: 0,
+                        recentWorks: []
+                    });
                 }
+
+                const entry = authorMap.get(author.id);
+                entry.localWorksCount++;
+                entry.recentWorks.push({
+                    title: work.title,
+                    year: pubYear,
+                    citationCount: work.cited_by_count || 0
+                });
             }
         }
 
-        // Sort by frequency
-        const topAuthors = Object.values(authorCounts).sort((a, b) => b.count - a.count);
-        console.log(`${LOG_PREFIX} Top 5 authors by frequency:`);
-        topAuthors.slice(0, 5).forEach((a, i) => {
-            console.log(`${LOG_PREFIX}    ${i + 1}. ${a.name} (${a.count} papers) — ${a.institution}`);
-        });
+        const candidates: OpenAlexAuthorResponse[] = [];
+        for (const [id, entry] of Array.from(authorMap.entries()).slice(0, 15)) {
+            // Usually, we'd fetch the full profile here, but to avoid 15 parallel HTTP calls, 
+            // we'll synthesize with what we have from the works grouping + fallback metrics.
 
-        if (topAuthors.length === 0) throw new Error('No authors found in works');
+            // Calculate activity based on the local sample we pulled
+            const worksLast3Years = entry.recentWorks.filter((w: any) => w.year >= currentYear - 3).length;
+            const lastWorkYear = entry.recentWorks.reduce((max: number, w: any) => Math.max(max, w.year), 0);
 
-        const topAuthor = topAuthors[0];
+            // Formula: score = 0.45 * normalized(relevant_works_last_3y) + 0.35 * normalized(cited_by_count) + 0.20 * normalized(recency)
+            // Note: we estimate cited_by_count by summing citations of the works we pulled for this author
+            const estimatedCitations = entry.recentWorks.reduce((sum: number, w: any) => sum + w.citationCount, 0);
 
-        // Fetch full author details
-        console.log(`${LOG_PREFIX} Fetching full profile for: ${topAuthor.name} (${topAuthor.id})`);
-        const authorUrl = `https://api.openalex.org/authors/${topAuthor.id.replace('https://openalex.org/', '')}`;
-        const authorRes = await fetch(authorUrl, {
-            headers: { 'User-Agent': 'benchspark-co-investigator/1.0 (mailto:benchspark@example.com)' }
-        });
+            const score =
+                (0.45 * normalize(worksLast3Years, 10)) +
+                (0.35 * normalize(estimatedCitations, 1000)) +
+                (0.20 * calculateRecencyScore(lastWorkYear, currentYear));
 
-        if (!authorRes.ok) throw new Error(`Author profile fetch failed: ${authorRes.status}`);
-        const author = await authorRes.json();
+            const activityLevel = determineActivityLevel(worksLast3Years, lastWorkYear, currentYear);
 
-        // Get recent publications
-        const recentWorks = data.results
-            .filter((w: any) => w.authorships?.some((a: any) => a.author?.id === topAuthor.id))
-            .slice(0, 5)
-            .map((w: any) => ({
-                title: w.title || 'Untitled',
-                year: w.publication_year || 0,
-                citationCount: w.cited_by_count || 0,
-            }));
+            candidates.push({
+                authorId: id,
+                displayName: entry.display_name,
+                currentInstitution: entry.institution,
+                metrics: {
+                    worksCount: entry.localWorksCount,
+                    citedByCount: estimatedCitations,
+                    hIndex: 0 // Cannot get precise hIndex without full profile fetch, leave 0
+                },
+                score: parseFloat(score.toFixed(3)),
+                activityLevel,
+                lastRelevantWorkYear: lastWorkYear,
+                recentPublications: entry.recentWorks.slice(0, 3)
+            });
+        }
 
-        const result: OpenAlexAuthorResponse = {
-            authorId: author.id,
-            displayName: author.display_name,
-            currentInstitution: author.last_known_institution?.display_name || topAuthor.institution,
-            metrics: {
-                worksCount: author.works_count || 0,
-                citedByCount: author.cited_by_count || 0,
-                hIndex: author.summary_stats?.h_index || 0,
-            },
-            recentPublications: recentWorks.length > 0 ? recentWorks : [
-                { title: 'No recent publications found', year: 2025, citationCount: 0 }
-            ]
-        };
-
-        console.log(`${LOG_PREFIX} ✅ Result: ${result.displayName} at ${result.currentInstitution}`);
-        console.log(`${LOG_PREFIX}    h-index: ${result.metrics.hIndex}, citations: ${result.metrics.citedByCount}, works: ${result.metrics.worksCount}`);
-        return result;
+        // Sort by raw calculated score descending
+        candidates.sort((a, b) => b.score - a.score);
+        logger.info(`${LOG_PREFIX} ✅ Returns ${candidates.length} ranked candidate authors`);
+        return candidates;
 
     } catch (error) {
-        console.error(`${LOG_PREFIX} ❌ Topic search failed:`, error instanceof Error ? error.message : error);
-        return getFallback(query);
+        logger.error({ error: error instanceof Error ? error.message : error }, `${LOG_PREFIX} Searching authors failed`);
+        throw error;
     }
 }
 
 /**
- * Searches OpenAlex by author name directly.
+ * openalex_get_author(author_id)
+ * Returns full author profile + affiliations + complete works timeline.
  */
-async function searchByAuthorName(authorName: string): Promise<OpenAlexAuthorResponse> {
-    const url = `https://api.openalex.org/authors?search=${encodeURIComponent(authorName)}`;
-    console.log(`${LOG_PREFIX} Author search URL: ${url}`);
+export async function openalex_get_author(authorId: string): Promise<OpenAlexAuthorResponse> {
+    logger.info({ authorId }, `${LOG_PREFIX} openalex_get_author called`);
+    const cleanId = authorId.replace('https://openalex.org/', '');
+    const url = `https://api.openalex.org/authors/${cleanId}`;
 
     try {
         const res = await fetch(url, {
-            headers: { 'User-Agent': 'benchspark-co-investigator/1.0 (mailto:benchspark@example.com)' }
+            headers: { 'User-Agent': 'benchspark-co-investigator/2.0 (mailto:benchspark@example.com)' }
         });
-        console.log(`${LOG_PREFIX} Response: ${res.status}`);
 
-        if (!res.ok) throw new Error(`OpenAlex API: ${res.status}`);
-        const data = await res.json();
+        if (!res.ok) throw new Error(`OpenAlex fetch failed: ${res.status}`);
+        const author = await res.json();
 
-        if (!data.results || data.results.length === 0) {
-            console.warn(`${LOG_PREFIX} ⚠️ No author found for: "${authorName}"`);
-            throw new Error('No author found');
-        }
+        // Fetch their specific works to calculate custom scoring
+        const worksUrl = `https://api.openalex.org/works?filter=author.id:${cleanId}&sort=publication_year:desc&per_page=15`;
+        const worksRes = await fetch(worksUrl);
+        const worksData = worksRes.ok ? await worksRes.json() : { results: [] };
 
-        const author = data.results[0];
-        console.log(`${LOG_PREFIX} ✅ Found: ${author.display_name}`);
+        const currentYear = new Date().getFullYear();
+        let worksLast3Years = 0;
+        let lastWorkYear = 0;
+        const recentPublications = [];
 
-        // Fetch recent works
-        let recentPublications: Array<{ title: string; year: number; citationCount: number }> = [];
-        try {
-            const worksUrl = `https://api.openalex.org/works?filter=author.id:${author.id}&sort=publication_year:desc&per_page=5`;
-            const worksRes = await fetch(worksUrl, {
-                headers: { 'User-Agent': 'benchspark-co-investigator/1.0 (mailto:benchspark@example.com)' }
+        for (const w of worksData.results) {
+            const year = w.publication_year || 0;
+            if (year >= currentYear - 3) worksLast3Years++;
+            if (year > lastWorkYear) lastWorkYear = year;
+
+            recentPublications.push({
+                title: w.title,
+                year,
+                citationCount: w.cited_by_count || 0
             });
-            if (worksRes.ok) {
-                const worksData = await worksRes.json();
-                recentPublications = (worksData.results || []).map((w: any) => ({
-                    title: w.title || 'Untitled',
-                    year: w.publication_year || 0,
-                    citationCount: w.cited_by_count || 0,
-                }));
-            }
-        } catch {
-            console.warn(`${LOG_PREFIX} ⚠️ Failed to fetch works`);
         }
+
+        // Apply strict DeepResearch scoring formula against their global metrics
+        const score =
+            (0.45 * normalize(worksLast3Years, 10)) +
+            (0.35 * normalize(author.cited_by_count || 0, 50000)) +
+            (0.20 * calculateRecencyScore(lastWorkYear, currentYear));
+
+        const activityLevel = determineActivityLevel(worksLast3Years, lastWorkYear, currentYear);
 
         return {
             authorId: author.id,
             displayName: author.display_name,
-            currentInstitution: author.last_known_institution?.display_name || 'Unknown Institution',
+            currentInstitution: author.last_known_institution?.display_name || 'Unknown',
             metrics: {
                 worksCount: author.works_count || 0,
                 citedByCount: author.cited_by_count || 0,
                 hIndex: author.summary_stats?.h_index || 0,
             },
-            recentPublications: recentPublications.length > 0 ? recentPublications : [
-                { title: 'No publications fetched', year: 2025, citationCount: 0 }
-            ]
+            score: parseFloat(score.toFixed(3)),
+            activityLevel,
+            lastRelevantWorkYear: lastWorkYear,
+            recentPublications: recentPublications.slice(0, 5)
         };
-    } catch (error) {
-        console.error(`${LOG_PREFIX} ❌ Author search failed:`, error instanceof Error ? error.message : error);
-        return getFallback(authorName);
-    }
-}
 
-function getFallback(query: string): OpenAlexAuthorResponse {
-    console.warn(`${LOG_PREFIX} ⚠️ Returning FALLBACK data`);
-    return {
-        authorId: "https://openalex.org/FALLBACK",
-        displayName: query,
-        currentInstitution: "⚠️ Fallback — OpenAlex search failed",
-        metrics: { worksCount: 0, citedByCount: 0, hIndex: 0 },
-        recentPublications: [
-            { title: "OpenAlex API search failed — check terminal logs", year: 2025, citationCount: 0 }
-        ]
-    };
+    } catch (error) {
+        logger.error({ error: error instanceof Error ? error.message : error }, `${LOG_PREFIX} Get author failed`);
+        throw error;
+    }
 }

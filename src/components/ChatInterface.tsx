@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { SubTask } from '@/types';
+import { DeepResearchPlan, PlanStep } from '@/types';
 
 interface Message {
     id: string;
@@ -11,7 +11,7 @@ interface Message {
 }
 
 interface ChatInterfaceProps {
-    onPlanCreated: (plan: SubTask[], sessionId: string, query: string) => void;
+    onPlanCreated: (planObj: DeepResearchPlan) => void;
 }
 
 export default function ChatInterface({ onPlanCreated }: ChatInterfaceProps) {
@@ -19,7 +19,7 @@ export default function ChatInterface({ onPlanCreated }: ChatInterfaceProps) {
         {
             id: 'init',
             role: 'assistant',
-            text: "Hello! I'm your **Co-Investigator** — an AI research assistant powered by Vertex AI.\n\nI can help you investigate diseases, find genetic targets, identify key researchers, and synthesize literature. What would you like to research today?",
+            text: "Hello! I'm your **DeepResearch Co-Investigator**.\n\nI can execute complex, multi-step research plans, fetch evidence, and synthesize grounded reports. What would you like to investigate today?",
             timestamp: new Date(),
         },
     ]);
@@ -51,7 +51,6 @@ export default function ChatInterface({ onPlanCreated }: ChatInterfaceProps) {
         setIsTyping(true);
 
         try {
-            // Call the real agent plan API
             const res = await fetch('/api/agent/plan', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -61,27 +60,31 @@ export default function ChatInterface({ onPlanCreated }: ChatInterfaceProps) {
             const data = await res.json();
 
             if (data.status === 'success' && data.plan) {
+                const planObj: DeepResearchPlan = data.plan;
+
                 // Format the plan into a readable message
-                const planSteps = data.plan
-                    .map((step: SubTask, i: number) => `${i + 1}. **${step.description}** → \`${step.toolToUse}\``)
+                const planSteps = planObj.plan
+                    .map((step: PlanStep, i: number) => {
+                        const tools = step.tools.join(', ');
+                        return `${i + 1}. **${step.name}** → \`${tools}\``;
+                    })
                     .join('\n');
 
                 const assistantMsg: Message = {
                     id: `asst-${Date.now()}`,
                     role: 'assistant',
-                    text: `I've created a research plan with **${data.plan.length} steps**:\n\n${planSteps}\n\nStarting execution now — check the Investigation Plan panel on the right to track progress. I'll pause at each step for your review.`,
+                    text: `I've created a research plan with **${planObj.plan.length} steps**:\n\n${planSteps}\n\nStarting execution now — check the Investigation Plan panel on the right to track progress. I will pause when human confirmation is needed.`,
                     timestamp: new Date(),
                 };
                 setMessages((prev) => [...prev, assistantMsg]);
 
                 // Notify parent to update session state and start execution
-                onPlanCreated(data.plan, data.sessionId, text);
+                onPlanCreated(planObj);
             } else {
-                // API returned an error
                 const errorMsg: Message = {
                     id: `asst-${Date.now()}`,
                     role: 'assistant',
-                    text: `⚠️ I encountered an issue creating the research plan:\n\n\`${data.error || 'Unknown error'}\`\n\nThis might be a GCP authentication issue. Make sure you've run \`./gcp-login.sh\` first. You can also try a simpler query.`,
+                    text: `⚠️ I encountered an issue creating the research plan:\n\n\`${data.error || 'Unknown error'}\`\n\nThis might be a GCP authentication issue, or rate limiting.`,
                     timestamp: new Date(),
                 };
                 setMessages((prev) => [...prev, errorMsg]);
@@ -90,7 +93,7 @@ export default function ChatInterface({ onPlanCreated }: ChatInterfaceProps) {
             const errorMsg: Message = {
                 id: `asst-${Date.now()}`,
                 role: 'assistant',
-                text: `⚠️ Network error — couldn't reach the server:\n\n\`${err.message}\`\n\nMake sure the dev server is running with \`npm run dev\`.`,
+                text: `⚠️ Network error — couldn't reach the server:\n\n\`${err.message}\`\n\nMake sure the dev server is running.`,
                 timestamp: new Date(),
             };
             setMessages((prev) => [...prev, errorMsg]);
@@ -171,7 +174,7 @@ export default function ChatInterface({ onPlanCreated }: ChatInterfaceProps) {
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                        placeholder="e.g., Find researchers who have published on IPF in the last 3 years"
+                        placeholder="e.g., Identify active researchers in IPF target discovery"
                         className="input-glow flex-1 px-4 py-3 rounded-xl text-sm"
                         style={{
                             background: 'var(--bg-input)',
@@ -194,7 +197,7 @@ export default function ChatInterface({ onPlanCreated }: ChatInterfaceProps) {
                     </button>
                 </div>
                 <p className="text-[10px] mt-2 text-center" style={{ color: 'var(--text-muted)' }}>
-                    Co-Investigator uses Vertex AI with Google Search grounding for verified research.
+                    DeepResearch uses Vertex AI with strict grounded citations and tool execution.
                 </p>
             </div>
         </div>
