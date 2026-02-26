@@ -1,15 +1,10 @@
 import { NextResponse } from 'next/server';
 import { VertexAI } from '@google-cloud/vertexai';
-import { NextResponse } from 'next/server';
-import { VertexAI } from '@google-cloud/vertexai';
-import { createSession } from '@/lib/firestore/stateEngine';
-import { ResearchSession, SubTask } from '@/types';
-
+import { SubTask } from '@/lib/types';
 
 // Initialize Vertex AI
-// NOTE: Ensure process.env.GOOGLE_CLOUD_PROJECT is set or ADC is configured via gcp-login.sh
 const vertexAI = new VertexAI({
-    project: process.env.GOOGLE_CLOUD_PROJECT || 'benchspark-hackathon-default',
+    project: process.env.GOOGLE_CLOUD_PROJECT || 'benchspark-data-1771447466',
     location: 'us-central1'
 });
 
@@ -44,7 +39,7 @@ export async function POST(req: Request) {
       Output exactly a JSON array of tasks matching this TypeScript interface:
       Array<{
         id: string; // e.g., "step-1"
-        description: string; // e.g., "Query BigQuery for IPF targets"
+        description: string; // e.g., "Query BigQuery for NSCLC targets"
         toolToUse: 'bigquery' | 'openalex' | 'pubmed' | 'none';
         status: 'pending';
       }>
@@ -52,23 +47,19 @@ export async function POST(req: Request) {
 
         const requestBody = {
             contents: [{ role: 'user', parts: [{ text: query }] }],
-      systemInstruction: { role: 'system' as const, parts: [{ text: systemInstruction }] }
-
+            systemInstruction: { role: 'system' as const, parts: [{ text: systemInstruction }] }
         };
 
         const response = await generativeModel.generateContent(requestBody);
 
-        // Safety check parsing
         const candidateText = response.response.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
-        let plan = [];
+        let plan: SubTask[] = [];
         try {
             plan = JSON.parse(candidateText);
         } catch (e) {
             console.error("Failed to parse Vertex API response", candidateText);
             return NextResponse.json({ error: 'Failed to generate a valid plan' }, { status: 500 });
         }
-
-        // TODO: In a later step, we will save this initial state to Firestore here
 
         return NextResponse.json({
             status: 'success',

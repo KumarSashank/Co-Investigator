@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getSession, updateSubTask } from '../../../../lib/firestore/stateEngine';
-import { SubTask } from '../../../../types';
+import { getSession, updateSubTask } from '@/lib/firestore/stateEngine';
+import { SubTask } from '@/lib/types';
 
 /**
  * POST /api/agent/execute
@@ -21,7 +21,7 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Session not found' }, { status: 404 });
         }
 
-        const task = session.plan.find(t => t.id === taskId);
+        const task = session.plan.find((t: SubTask) => t.id === taskId);
         if (!task) {
             return NextResponse.json({ error: 'Task not found in session plan' }, { status: 404 });
         }
@@ -29,37 +29,33 @@ export async function POST(req: Request) {
         // 2. Mark task as in progress
         await updateSubTask(sessionId, taskId, { status: 'in_progress' });
 
-        // 3. Execute the appropriate tool (simulating internal fetch to our own Next.js API Routes)
-        // NOTE: In a real environment, you'd use absolute URLs or server-side function calls.
-        // For this hackathon structure, we just simulate the routing logic here.
-        let simulatedToolResult = null;
-
-        // Create absolute URL base for relative fetching within Next.js API
-        // Using a dummy localhost URL for server-side relative fetching workaround.
+        // 3. Execute the appropriate tool
         const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+        let toolResult = null;
 
         if (task.toolToUse === 'bigquery') {
-            // Querying the route that the Backend Lead is building
             const res = await fetch(`${baseUrl}/api/tools/bigquery?disease=${encodeURIComponent(session.originalQuery)}`);
-            simulatedToolResult = await res.json();
+            toolResult = await res.json();
         }
         else if (task.toolToUse === 'openalex') {
             const res = await fetch(`${baseUrl}/api/tools/openalex?keyword=${encodeURIComponent(session.originalQuery)}`);
-            simulatedToolResult = await res.json();
+            toolResult = await res.json();
         }
-        // ... logic for pubmed
+        else if (task.toolToUse === 'pubmed') {
+            const res = await fetch(`${baseUrl}/api/tools/pubmed?query=${encodeURIComponent(session.originalQuery)}`);
+            toolResult = await res.json();
+        }
 
         // 4. Update the task with the result and mark it complete
-        // The stateEngine will automatically determine if a Human-in-the-Loop pause is required via updateSubTask.
         await updateSubTask(sessionId, taskId, {
             status: 'completed',
-            resultData: simulatedToolResult
+            resultData: toolResult
         });
 
         return NextResponse.json({
             status: 'success',
             taskId,
-            result: simulatedToolResult
+            result: toolResult
         });
 
     } catch (error: any) {

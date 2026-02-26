@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { VertexAI } from '@google-cloud/vertexai';
-import { getSession, updateSession } from '../../../../lib/firestore/stateEngine';
+import { getSession, updateSession } from '@/lib/firestore/stateEngine';
 
 const vertexAI = new VertexAI({
     project: process.env.GOOGLE_CLOUD_PROJECT || 'benchspark-hackathon-default',

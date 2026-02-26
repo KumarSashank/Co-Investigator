@@ -12,9 +12,28 @@ const bigqueryClient = new BigQuery({
  * Falls back to realistic demo data if BigQuery is not accessible.
  */
 export async function fetchDiseaseTargetsFromBigQuery(diseaseId: string): Promise<BigQueryDiseaseResponse> {
-  // Try the Open Targets public dataset first, then the local primekg dataset
+  // Try CIViC hackathon dataset first, then Open Targets, then primekg
   const queries = [
-    // Query 1: Try Open Targets public dataset (disease-target associations)
+    // Query 1: CIViC dataset (loaded from hackathon GCS bucket)
+    `SELECT
+      molecular_profile AS targetSymbol,
+      disease,
+      therapies,
+      evidence_type,
+      evidence_level,
+      significance,
+      CAST(CASE evidence_level
+        WHEN 'A' THEN 0.95
+        WHEN 'B' THEN 0.80
+        WHEN 'C' THEN 0.65
+        WHEN 'D' THEN 0.50
+        ELSE 0.40
+      END AS FLOAT64) AS evidenceScore
+    FROM \`benchspark-data-1771447466.co_investigator.civic_clinical_evidence\`
+    WHERE LOWER(disease) LIKE CONCAT('%', LOWER(@diseaseId), '%')
+    ORDER BY evidenceScore DESC
+    LIMIT 10`,
+    // Query 2: Try Open Targets public dataset (disease-target associations)
     `SELECT
       t.id AS targetId,
       t.approvedSymbol AS targetSymbol,
@@ -24,7 +43,7 @@ export async function fetchDiseaseTargetsFromBigQuery(diseaseId: string): Promis
     WHERE a.diseaseId = @diseaseId
     ORDER BY a.score DESC
     LIMIT 10`,
-    // Query 2: Try local primekg dataset (if populated)
+    // Query 3: Try local primekg dataset (if populated)
     `SELECT
       x_id AS targetId,
       x_name AS targetSymbol,

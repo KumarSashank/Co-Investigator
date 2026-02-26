@@ -1,6 +1,7 @@
 'use client';
 
-import { SubTask, MOCK_SESSION } from '@/types';
+import { useState } from 'react';
+import { ResearchSession, SubTask } from '@/lib/types';
 
 const STATUS_CONFIG: Record<string, { icon: string; label: string; dotClass: string }> = {
     completed: { icon: '✓', label: 'Completed', dotClass: 'bg-[var(--accent-green)]' },
@@ -16,10 +17,30 @@ const TOOL_ICONS: Record<string, string> = {
     none: '🤖',
 };
 
-export default function TaskTracker() {
-    const session = MOCK_SESSION;
-    const plan = session.plan;
+interface TaskTrackerProps {
+    session: ResearchSession | null;
+    onApprove: (feedback?: string) => void;
+    onDeny: () => void;
+}
 
+export default function TaskTracker({ session, onApprove, onDeny }: TaskTrackerProps) {
+    const [feedback, setFeedback] = useState('');
+
+    if (!session) {
+        return (
+            <div className="flex flex-col items-center justify-center h-48 text-center space-y-3 animate-fade-in">
+                <span className="text-3xl">🔬</span>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    No active investigation yet.
+                </p>
+                <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    Type a research query in the chat to get started.
+                </p>
+            </div>
+        );
+    }
+
+    const plan = session.plan;
     const completedCount = plan.filter((t) => t.status === 'completed').length;
     const progress = Math.round((completedCount / plan.length) * 100);
 
@@ -74,18 +95,26 @@ export default function TaskTracker() {
                         </h3>
                     </div>
                     <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                        The agent has completed the initial BigQuery query and is requesting permission to proceed with the PubMed literature search.
+                        The agent has completed the initial data query and is requesting permission to proceed with the remaining tasks.
                     </p>
                     <textarea
+                        value={feedback}
+                        onChange={(e) => setFeedback(e.target.value)}
                         placeholder="Optional: Add feedback or constraints..."
                         className="input-glow w-full px-3 py-2 rounded-lg text-xs resize-none h-16"
                         style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                     />
                     <div className="flex gap-2">
-                        <button className="btn-approve flex-1 text-sm py-2.5 rounded-lg">
-                            ✓ Approve & Continue
+                        <button
+                            onClick={() => onApprove(feedback)}
+                            className="btn-approve flex-1 text-sm py-2.5 rounded-lg"
+                        >
+                            ✓ Approve &amp; Continue
                         </button>
-                        <button className="btn-deny flex-1 text-sm py-2.5 rounded-lg">
+                        <button
+                            onClick={onDeny}
+                            className="btn-deny flex-1 text-sm py-2.5 rounded-lg"
+                        >
                             ✕ Deny
                         </button>
                     </div>
@@ -123,8 +152,7 @@ function TaskCard({ task, index, isLast }: { task: SubTask; index: number; isLas
 
             {/* Card */}
             <div
-                className={`glass-card glass-card-hover p-3.5 animate-fade-in ${task.status === 'in_progress' ? 'animate-glow-pulse' : ''
-                    }`}
+                className={`glass-card glass-card-hover p-3.5 animate-fade-in ${task.status === 'in_progress' ? 'animate-glow-pulse' : ''}`}
                 style={{
                     borderColor: task.status === 'in_progress' ? 'var(--border-accent)' : undefined,
                 }}
@@ -160,6 +188,16 @@ function TaskCard({ task, index, isLast }: { task: SubTask; index: number; isLas
                             <span>
                                 Found {task.resultData.associatedTargets.length} targets •{' '}
                                 {task.resultData.pathways?.length || 0} pathways
+                            </span>
+                        )}
+                        {task.resultData.displayName && (
+                            <span>
+                                Found {task.resultData.displayName} (h-index: {task.resultData.metrics?.hIndex || 'N/A'})
+                            </span>
+                        )}
+                        {Array.isArray(task.resultData) && task.resultData.length > 0 && (
+                            <span>
+                                Found {task.resultData.length} publications
                             </span>
                         )}
                     </div>
