@@ -129,12 +129,20 @@ export default function Home() {
       currentSession = { ...currentSession, status: 'running' as const };
     }
 
-    // Generate the final report
+    // Generate the final report — pass tool results directly (no Firestore needed)
     try {
+      const toolResults = currentSession.plan
+        .filter((t) => t.status === 'completed' && t.resultData)
+        .map((t) => t.resultData);
+
       const res = await fetch('/api/agent/report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: currentSession.id }),
+        body: JSON.stringify({
+          sessionId: currentSession.id,
+          toolResults,
+          originalQuery: currentSession.originalQuery,
+        }),
       });
       const data = await res.json();
       if (data.markdown) {
