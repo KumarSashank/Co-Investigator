@@ -80,6 +80,29 @@ export async function POST(req: Request) {
                     }
                     break;
 
+                case 'web_search':
+                    const searchQuery = extract(/query (.*)/i) || extract(/for (.*)/i) || task.description;
+
+                    // In a production environment, this would call Google Custom Search API or SerpApi.
+                    // For this hackathon/demo environment, we use a custom fetch to a public search proxy or OpenAlex
+                    // to simulate finding unstructured emerging data on the web.
+                    const webScanUrl = `https://api.crossref.org/works?query=${encodeURIComponent(searchQuery)}&select=title,abstract,author,URL&rows=5`;
+                    const webScanRes = await fetch(webScanUrl);
+                    if (webScanRes.ok) {
+                        const webData = await webScanRes.json();
+                        resultData = {
+                            message: "Web search results (Unprocessed text and articles)",
+                            sources: webData.message.items.map((item: any) => ({
+                                title: item.title?.[0],
+                                link: item.URL,
+                                authors: item.author?.map((a: any) => `${a.given} ${a.family}`).join(', ')
+                            }))
+                        };
+                    } else {
+                        resultData = { message: "Web search failed or no results found." };
+                    }
+                    break;
+
                 default:
                     resultData = { message: "No tool required or tool not yet implemented" };
             }

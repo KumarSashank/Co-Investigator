@@ -42,13 +42,18 @@ export async function POST(req: Request) {
          - bioRxiv/medRxiv, ClinicalTrials.gov, DepMap (Cancer), GTEx (Expressions), 
            Human Protein Atlas, ORKG, Pathway Commons, PubMedQA, PubTator 3.0, STRING (Interactions).
       
+      6. 'web_search' - For general web searching (Google) to find emerging news, researchers, or diseases that do not appear in any biomedical datasets yet.
+      
       Output exactly a JSON array of tasks matching this TypeScript interface:
       Array<{
         id: string; // e.g., "step-1"
         description: string; // e.g., "Query BigQuery for Multiple Sclerosis targets"
-        toolToUse: 'bigquery' | 'openalex' | 'pubmed' | 'pubtator' | 'datasets' | 'none';
+        toolToUse: 'bigquery' | 'openalex' | 'pubmed' | 'pubtator' | 'datasets' | 'web_search' | 'none';
         status: 'pending';
       }>
+
+      CRITICAL STRATEGY: 
+      If querying for a very rare disease, an emerging drug, or something you suspect is not in curated structured datasets like 'bigquery' (ClinGen/CIViC), you must ALWAYS include a fallback step using either 'pubmed' (for literature) or 'web_search' (to search the broader internet). DO NOT use 'web_search' if the data is likely in standard bio-datasets.
     `;
 
         const requestBody = {
