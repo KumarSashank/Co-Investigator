@@ -1,14 +1,204 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import ChatInterface from '@/components/ChatInterface';
 import TaskTracker from '@/components/TaskTracker';
 import ResearchBrief from '@/components/ResearchBrief';
-import { MOCK_SESSION } from '@/types';
+import { ResearchSession, SubTask, MOCK_SESSION } from '@/types';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'chat' | 'brief'>('chat');
-  const session = MOCK_SESSION;
+
+  // Session state — starts null, populated when user sends a query
+  const [session, setSession] = useState<ResearchSession | null>(null);
+  const [isExecuting, setIsExecuting] = useState(false);
+
+  /**
+   * Called by ChatInterface when the agent plan API returns successfully.
+   * Creates a local session object and kicks off execution.
+   */
+  const handlePlanCreated = useCallback((plan: SubTask[], sessionId: string, query: string) => {
+    const newSession: ResearchSession = {
+      id: sessionId,
+      originalQuery: query,
+      status: 'running',
+      plan: plan.map(t => ({ ...t, status: t.status || 'pending' as const })),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setSession(newSession);
+    // Auto-execute the plan steps sequentially
+    executeAllTasks(newSession);
+  }, []);
+
+  /**
+   * Sequentially executes each subtask in the plan via /api/agent/execute.
+   */
+  const executeAllTasks = async (currentSession: ResearchSession) => {
+    setIsExecuting(true);
+    let updatedSession = { ...currentSession };
+
+    for (const task of updatedSession.plan) {
+      // Mark task as in_progress
+      updatedSession = {
+        ...updatedSession,
+        plan: updatedSession.plan.map(t =>
+          t.id === task.id ? { ...t, status: 'in_progress' as const } : t
+        ),
+        updatedAt: new Date().toISOString(),
+      };
+      setSession({ ...updatedSession });
+
+      try {
+        const res = await fetch('/api/agent/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: updatedSession.id,
+            taskId: task.id,
+          }),
+        });
+        const result = await res.json();
+
+        // Mark task as completed with results
+        updatedSession = {
+          ...updatedSession,
+          plan: updatedSession.plan.map(t =>
+            t.id === task.id
+              ? { ...t, status: 'completed' as const, resultData: result.result }
+              : t
+          ),
+          status: 'hitl_paused',
+          updatedAt: new Date().toISOString(),
+        };
+      } catch (err) {
+        // Mark task as failed
+        updatedSession = {
+          ...updatedSession,
+          plan: updatedSession.plan.map(t =>
+            t.id === task.id ? { ...t, status: 'failed' as const } : t
+          ),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      setSession({ ...updatedSession });
+
+      // Pause after each task for HITL review (user must approve to continue)
+      break; // Stop after first task — HITL checkpoint
+    }
+    setIsExecuting(false);
+  };
+
+  /**
+   * Called when the user clicks Approve on the HITL checkpoint.
+   * Resumes execution of the remaining pending tasks.
+   */
+  const handleApproval = useCallback(async (approved: boolean, feedback?: string) => {
+    if (!session) return;
+
+    if (!approved) {
+      setSession(prev => prev ? { ...prev, status: 'error', updatedAt: new Date().toISOString() } : null);
+      return;
+    }
+
+    // Find the next pending task and continue execution
+    const nextPendingIdx = session.plan.findIndex(t => t.status === 'pending');
+    if (nextPendingIdx === -1) {
+      // All tasks done — generate report
+      await generateReport(session);
+      return;
+    }
+
+    // Continue with remaining tasks
+    const updatedSession = { ...session, status: 'running' as const, updatedAt: new Date().toISOString() };
+    setSession(updatedSession);
+
+    setIsExecuting(true);
+    let runningSession: ResearchSession = { ...updatedSession };
+
+    for (let i = nextPendingIdx; i < runningSession.plan.length; i++) {
+      const task = runningSession.plan[i];
+      if (task.status !== 'pending') continue;
+
+      // Mark as in_progress
+      runningSession = {
+        ...runningSession,
+        plan: runningSession.plan.map(t =>
+          t.id === task.id ? { ...t, status: 'in_progress' as const } : t
+        ),
+        updatedAt: new Date().toISOString(),
+      };
+      setSession({ ...runningSession });
+
+      try {
+        const res = await fetch('/api/agent/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: runningSession.id, taskId: task.id }),
+        });
+        const result = await res.json();
+
+        runningSession = {
+          ...runningSession,
+          plan: runningSession.plan.map(t =>
+            t.id === task.id
+              ? { ...t, status: 'completed' as const, resultData: result.result }
+              : t
+          ),
+          status: 'hitl_paused' as const,
+          updatedAt: new Date().toISOString(),
+        };
+      } catch (err) {
+        runningSession = {
+          ...runningSession,
+          plan: runningSession.plan.map(t =>
+            t.id === task.id ? { ...t, status: 'failed' as const } : t
+          ),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      setSession({ ...runningSession });
+      break; // Pause after each task for HITL
+    }
+
+    // Check if all tasks are now done
+    const allDone = runningSession.plan.every(t => t.status === 'completed' || t.status === 'failed');
+    if (allDone) {
+      await generateReport(runningSession);
+    }
+
+    setIsExecuting(false);
+  }, [session]);
+
+  /**
+   * Generates the final research brief by calling /api/agent/report.
+   */
+  const generateReport = async (currentSession: ResearchSession) => {
+    try {
+      const res = await fetch('/api/agent/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSession.id }),
+      });
+      const data = await res.json();
+
+      setSession(prev => prev ? {
+        ...prev,
+        status: 'completed',
+        finalReportMarkdown: data.markdown,
+        updatedAt: new Date().toISOString(),
+      } : null);
+
+      // Auto-switch to the brief tab
+      setActiveTab('brief');
+    } catch (err) {
+      console.error('Report generation failed:', err);
+    }
+  };
+
+  // Use the real session for display, or show a default empty state
+  const displaySession = session;
+  const displayStatus = displaySession?.status || 'planning';
 
   return (
     <div className="flex h-screen flex-col" style={{ background: 'var(--bg-primary)' }}>
@@ -33,8 +223,8 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-3">
-          <span className={`badge badge-${session.status}`}>
-            {session.status.replace('_', ' ')}
+          <span className={`badge badge-${displayStatus}`}>
+            {displayStatus.replace('_', ' ')}
           </span>
           <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: 'var(--bg-card)', color: 'var(--accent-blue)' }}>
             P
@@ -87,12 +277,12 @@ export default function Home() {
           <div className="flex-1 overflow-hidden">
             {activeTab === 'chat' ? (
               <div className="h-full">
-                <ChatInterface />
+                <ChatInterface onPlanCreated={handlePlanCreated} />
               </div>
             ) : (
               <div className="h-full overflow-y-auto p-6">
                 <ResearchBrief
-                  markdown={session.finalReportMarkdown || ''}
+                  markdown={displaySession?.finalReportMarkdown || ''}
                   groundingScore={0.87}
                 />
               </div>
@@ -112,7 +302,7 @@ export default function Home() {
             <span className="text-base">🧪</span>
             Investigation Plan
           </h2>
-          <TaskTracker />
+          <TaskTracker session={displaySession} onApproval={handleApproval} isExecuting={isExecuting} />
         </aside>
       </div>
     </div>

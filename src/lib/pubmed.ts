@@ -1,26 +1,34 @@
 import { PubMedArticleResponse } from './types';
 
+const LOG_PREFIX = '📄 [PubMed]';
+
 export async function fetchFromPubMed(query: string): Promise<PubMedArticleResponse[]> {
-    // PubMed E-utilities search
-    // e.g. https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=IPF&retmode=json&retmax=5
+    console.log(`${LOG_PREFIX} Searching for: "${query}"`);
 
     const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmode=json&retmax=5`;
+    console.log(`${LOG_PREFIX} Search URL: ${searchUrl}`);
 
     try {
         const searchRes = await fetch(searchUrl);
-        if (!searchRes.ok) throw new Error("PubMed search failed");
+        console.log(`${LOG_PREFIX} Search response status: ${searchRes.status}`);
+
+        if (!searchRes.ok) throw new Error(`PubMed search failed with status ${searchRes.status}`);
         const searchData = await searchRes.json();
 
         const idList = searchData.esearchresult?.idlist || [];
+        console.log(`${LOG_PREFIX} Found ${idList.length} article IDs: [${idList.join(', ')}]`);
+
         if (idList.length === 0) {
+            console.warn(`${LOG_PREFIX} ⚠️ No articles found for: "${query}"`);
             return [];
         }
 
-        // Now fetch details for these IDs
-        // https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=123,456&retmode=json
         const summaryUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${idList.join(',')}&retmode=json`;
+        console.log(`${LOG_PREFIX} Fetching summaries...`);
         const summaryRes = await fetch(summaryUrl);
-        if (!summaryRes.ok) throw new Error("PubMed summary failed");
+        console.log(`${LOG_PREFIX} Summary response status: ${summaryRes.status}`);
+
+        if (!summaryRes.ok) throw new Error(`PubMed summary failed with status ${summaryRes.status}`);
         const summaryData = await summaryRes.json();
 
         const articles: PubMedArticleResponse[] = [];
@@ -31,24 +39,29 @@ export async function fetchFromPubMed(query: string): Promise<PubMedArticleRespo
                 articles.push({
                     pmid: pData.uid,
                     title: pData.title,
-                    abstract: "Abstract requires efetch, using title as placeholder for summary.", // Efetch is required for abstract, skipping for performance unless needed.
+                    abstract: "Abstract requires efetch endpoint (skipped for performance).",
                     publicationDate: pData.pubdate || pData.epubdate,
                     authors: pData.authors ? pData.authors.map((a: any) => a.name) : []
                 });
             }
         }
 
+        console.log(`${LOG_PREFIX} ✅ Parsed ${articles.length} articles:`);
+        articles.forEach((a, i) => {
+            console.log(`${LOG_PREFIX}    ${i + 1}. "${a.title.substring(0, 80)}..." (${a.publicationDate})`);
+        });
+
         return articles;
     } catch (error) {
-        console.warn("PubMed API failed, returning fallback:", error);
-        // Return fallback matching PubMedArticleResponse (as array)
+        console.error(`${LOG_PREFIX} ❌ FAILED:`, error instanceof Error ? error.message : error);
+        console.warn(`${LOG_PREFIX} ⚠️ Returning FALLBACK data`);
         return [
             {
-                pmid: "12345678",
-                title: `Mock Study on ${query}`,
-                abstract: "This is a mock abstract regarding the queried topic. Real fetch failed.",
-                publicationDate: "2024-01-15",
-                authors: ["Doe J", "Smith A"]
+                pmid: "FALLBACK",
+                title: `⚠️ PubMed API failed for "${query}" — check terminal logs`,
+                abstract: "The PubMed E-utilities API call failed. Check the terminal for the full error.",
+                publicationDate: "N/A",
+                authors: ["Fallback"]
             }
         ];
     }

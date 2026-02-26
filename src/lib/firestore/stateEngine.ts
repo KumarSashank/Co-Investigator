@@ -1,22 +1,24 @@
-import { Firestore } from '@google-cloud/firestore';
 import { ResearchSession, SubTask } from '@/types';
 
-// Note: Ensure process.env.GOOGLE_CLOUD_PROJECT is set or ADC is configured
-const firestore = new Firestore({
-    ignoreUndefinedProperties: true
-});
+/**
+ * In-Memory State Engine
+ * 
+ * Uses a simple Map to store sessions in server memory.
+ * This works perfectly for local development and hackathon demos.
+ * For production, swap this with Firestore by enabling the API and 
+ * uncommenting the Firestore implementation below.
+ */
 
-const SESSIONS_COLLECTION = 'research_sessions';
+const sessions = new Map<string, ResearchSession>();
 
 /**
  * Creates a new research session with the Vertex AI generated plan.
  */
 export async function createSession(originalQuery: string, plan: SubTask[]): Promise<string> {
-    const sessionRef = firestore.collection(SESSIONS_COLLECTION).doc();
+    const id = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    // Default initial session state
     const session: ResearchSession = {
-        id: sessionRef.id,
+        id,
         originalQuery,
         status: 'running',
         plan: plan,
@@ -24,68 +26,65 @@ export async function createSession(originalQuery: string, plan: SubTask[]): Pro
         updatedAt: new Date().toISOString()
     };
 
-    await sessionRef.set(session);
-    return session.id;
+    sessions.set(id, session);
+    console.log(`[StateEngine] Created session: ${id}`);
+    return id;
 }
 
 /**
  * Updates an entire session state, usually during a HITL block or step completion.
  */
 export async function updateSession(sessionId: string, updates: Partial<ResearchSession>) {
-    const sessionRef = firestore.collection(SESSIONS_COLLECTION).doc(sessionId);
-    await sessionRef.update({
+    const session = sessions.get(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} does not exist`);
+
+    const updated = {
+        ...session,
         ...updates,
         updatedAt: new Date().toISOString()
-    });
+    };
+    sessions.set(sessionId, updated);
+    console.log(`[StateEngine] Updated session: ${sessionId}, status: ${updated.status}`);
 }
 
 /**
  * Updates a specific subtask within a session.
  */
 export async function updateSubTask(sessionId: string, taskId: string, taskUpdates: Partial<SubTask>) {
-    const sessionRef = firestore.collection(SESSIONS_COLLECTION).doc(sessionId);
+    const session = sessions.get(sessionId);
+    if (!session) throw new Error(`Session ${sessionId} does not exist`);
 
-    await firestore.runTransaction(async (t: any) => {
-        const doc = await t.get(sessionRef);
-        if (!doc.exists) throw new Error("Session does not exist!");
-
-        const data = doc.data() as ResearchSession;
-        const currentPlan = data.plan;
-
-        const updatedPlan = currentPlan.map((task: SubTask) => {
-            if (task.id === taskId) {
-                return { ...task, ...taskUpdates };
-            }
-            return task;
-        });
-
-        // Determine if we need to pause for HITL
-        // Example logic: if any task completes, pause before the next one if it requires User Confirmation
-        let newStatus = data.status;
-        const allCompleted = updatedPlan.every((t: SubTask) => t.status === 'completed' || t.status === 'failed');
-
-        if (allCompleted) {
-            newStatus = 'completed';
-        } else if (taskUpdates.status === 'completed') {
-            // Very basic HITL simulation: if one task completes, pause the session and ask user
-            newStatus = 'hitl_paused';
+    const updatedPlan = session.plan.map((task: SubTask) => {
+        if (task.id === taskId) {
+            return { ...task, ...taskUpdates };
         }
-
-        t.update(sessionRef, {
-            plan: updatedPlan,
-            status: newStatus,
-            updatedAt: new Date().toISOString()
-        });
+        return task;
     });
+
+    // Determine if we need to pause for HITL
+    let newStatus = session.status;
+    const allCompleted = updatedPlan.every((t: SubTask) => t.status === 'completed' || t.status === 'failed');
+
+    if (allCompleted) {
+        newStatus = 'completed';
+    } else if (taskUpdates.status === 'completed') {
+        // HITL: pause after each task completes so user can review
+        newStatus = 'hitl_paused';
+    }
+
+    const updated: ResearchSession = {
+        ...session,
+        plan: updatedPlan,
+        status: newStatus,
+        updatedAt: new Date().toISOString()
+    };
+    sessions.set(sessionId, updated);
+    console.log(`[StateEngine] Updated task ${taskId} in session ${sessionId}, session status: ${newStatus}`);
 }
 
 /**
- * Retrieves the current session. Polled by the frontend to render the UI.
+ * Retrieves the current session.
  */
 export async function getSession(sessionId: string): Promise<ResearchSession | null> {
-    const sessionRef = firestore.collection(SESSIONS_COLLECTION).doc(sessionId);
-    const doc = await sessionRef.get();
-
-    if (!doc.exists) return null;
-    return doc.data() as ResearchSession;
+    return sessions.get(sessionId) || null;
 }

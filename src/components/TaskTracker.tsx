@@ -1,6 +1,7 @@
 'use client';
 
-import { SubTask, MOCK_SESSION } from '@/types';
+import { useState } from 'react';
+import { ResearchSession, SubTask } from '@/types';
 
 const STATUS_CONFIG: Record<string, { icon: string; label: string; dotClass: string }> = {
     completed: { icon: '✓', label: 'Completed', dotClass: 'bg-[var(--accent-green)]' },
@@ -16,12 +17,42 @@ const TOOL_ICONS: Record<string, string> = {
     none: '🤖',
 };
 
-export default function TaskTracker() {
-    const session = MOCK_SESSION;
-    const plan = session.plan;
+interface TaskTrackerProps {
+    session: ResearchSession | null;
+    onApproval: (approved: boolean, feedback?: string) => void;
+    isExecuting: boolean;
+}
 
+export default function TaskTracker({ session, onApproval, isExecuting }: TaskTrackerProps) {
+    const [feedback, setFeedback] = useState('');
+
+    if (!session) {
+        return (
+            <div className="glass-card p-8 text-center animate-fade-in">
+                <div className="text-3xl mb-3 opacity-30">🔍</div>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    No active investigation yet.
+                </p>
+                <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                    Send a research query in the chat to get started.
+                </p>
+            </div>
+        );
+    }
+
+    const plan = session.plan;
     const completedCount = plan.filter((t) => t.status === 'completed').length;
     const progress = Math.round((completedCount / plan.length) * 100);
+
+    const handleApprove = () => {
+        onApproval(true, feedback || undefined);
+        setFeedback('');
+    };
+
+    const handleDeny = () => {
+        onApproval(false, feedback || undefined);
+        setFeedback('');
+    };
 
     return (
         <div className="space-y-5 animate-slide-in-right">
@@ -65,7 +96,7 @@ export default function TaskTracker() {
             </div>
 
             {/* HITL Checkpoint */}
-            {session.status === 'hitl_paused' && (
+            {session.status === 'hitl_paused' && !isExecuting && (
                 <div className="hitl-card p-5 space-y-3">
                     <div className="flex items-center gap-2 mb-1">
                         <span className="text-lg">⚠️</span>
@@ -74,21 +105,39 @@ export default function TaskTracker() {
                         </h3>
                     </div>
                     <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                        The agent has completed the initial BigQuery query and is requesting permission to proceed with the PubMed literature search.
+                        {completedCount < plan.length
+                            ? `Step ${completedCount} completed. Review the results above and approve to continue with the remaining ${plan.length - completedCount} step(s).`
+                            : 'All steps completed. Approve to generate the final research brief.'}
                     </p>
                     <textarea
+                        value={feedback}
+                        onChange={(e) => setFeedback(e.target.value)}
                         placeholder="Optional: Add feedback or constraints..."
                         className="input-glow w-full px-3 py-2 rounded-lg text-xs resize-none h-16"
                         style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                     />
                     <div className="flex gap-2">
-                        <button className="btn-approve flex-1 text-sm py-2.5 rounded-lg">
+                        <button onClick={handleApprove} className="btn-approve flex-1 text-sm py-2.5 rounded-lg">
                             ✓ Approve & Continue
                         </button>
-                        <button className="btn-deny flex-1 text-sm py-2.5 rounded-lg">
+                        <button onClick={handleDeny} className="btn-deny flex-1 text-sm py-2.5 rounded-lg">
                             ✕ Deny
                         </button>
                     </div>
+                </div>
+            )}
+
+            {/* Executing indicator */}
+            {isExecuting && (
+                <div className="glass-card p-4 text-center">
+                    <div className="typing-indicator flex gap-1.5 justify-center mb-2">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+                    <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        Executing task...
+                    </p>
                 </div>
             )}
         </div>
@@ -161,6 +210,19 @@ function TaskCard({ task, index, isLast }: { task: SubTask; index: number; isLas
                                 Found {task.resultData.associatedTargets.length} targets •{' '}
                                 {task.resultData.pathways?.length || 0} pathways
                             </span>
+                        )}
+                        {task.resultData.displayName && (
+                            <span>
+                                Researcher: {task.resultData.displayName} • h-index: {task.resultData.metrics?.hIndex || 'N/A'}
+                            </span>
+                        )}
+                        {Array.isArray(task.resultData) && task.resultData.length > 0 && (
+                            <span>
+                                Found {task.resultData.length} publications
+                            </span>
+                        )}
+                        {task.resultData.message && (
+                            <span>{task.resultData.message}</span>
                         )}
                     </div>
                 )}

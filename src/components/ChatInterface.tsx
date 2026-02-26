@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { SubTask } from '@/types';
 
 interface Message {
     id: string;
@@ -9,13 +10,11 @@ interface Message {
     timestamp: Date;
 }
 
-const MOCK_RESPONSES = [
-    "I'll create a research plan to investigate that. Let me break this down into subtasks using BigQuery, PubMed, and OpenAlex...\n\n**Plan created with 5 steps:**\n1. Query BigQuery for disease-target associations\n2. Search PubMed for recent publications\n3. Identify key researchers via OpenAlex\n4. Cross-reference with clinical trial data\n5. Synthesize findings into a research brief",
-    "Great question! I'm querying the Open Targets BigQuery dataset now. I found **3 high-confidence targets** for IPF:\n\n• **MUC5B** (score: 0.92) — Mucin production pathway\n• **TERT** (score: 0.87) — Telomere maintenance\n• **TGFB1** (score: 0.81) — TGF-β signaling\n\nShall I proceed to search PubMed for recent publications on these targets?",
-    "I've identified **Dr. Ganesh Raghu** (h-index: 91, University of Washington) as the most prolific IPF researcher. I also found 12 other active investigators. Would you like me to compile the full research brief now?",
-];
+interface ChatInterfaceProps {
+    onPlanCreated: (plan: SubTask[], sessionId: string, query: string) => void;
+}
 
-export default function ChatInterface() {
+export default function ChatInterface({ onPlanCreated }: ChatInterfaceProps) {
     const [messages, setMessages] = useState<Message[]>([
         {
             id: 'init',
@@ -28,7 +27,6 @@ export default function ChatInterface() {
     const [isTyping, setIsTyping] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
-    const responseIdx = useRef(0);
 
     const scrollToBottom = useCallback(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -38,7 +36,7 @@ export default function ChatInterface() {
         scrollToBottom();
     }, [messages, isTyping, scrollToBottom]);
 
-    const handleSend = () => {
+    const handleSend = async () => {
         const text = input.trim();
         if (!text || isTyping) return;
 
@@ -52,20 +50,53 @@ export default function ChatInterface() {
         setInput('');
         setIsTyping(true);
 
-        // Simulate AI response
-        const delay = 1500 + Math.random() * 1500;
-        setTimeout(() => {
-            const response = MOCK_RESPONSES[responseIdx.current % MOCK_RESPONSES.length];
-            responseIdx.current++;
-            const assistantMsg: Message = {
+        try {
+            // Call the real agent plan API
+            const res = await fetch('/api/agent/plan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: text }),
+            });
+
+            const data = await res.json();
+
+            if (data.status === 'success' && data.plan) {
+                // Format the plan into a readable message
+                const planSteps = data.plan
+                    .map((step: SubTask, i: number) => `${i + 1}. **${step.description}** → \`${step.toolToUse}\``)
+                    .join('\n');
+
+                const assistantMsg: Message = {
+                    id: `asst-${Date.now()}`,
+                    role: 'assistant',
+                    text: `I've created a research plan with **${data.plan.length} steps**:\n\n${planSteps}\n\nStarting execution now — check the Investigation Plan panel on the right to track progress. I'll pause at each step for your review.`,
+                    timestamp: new Date(),
+                };
+                setMessages((prev) => [...prev, assistantMsg]);
+
+                // Notify parent to update session state and start execution
+                onPlanCreated(data.plan, data.sessionId, text);
+            } else {
+                // API returned an error
+                const errorMsg: Message = {
+                    id: `asst-${Date.now()}`,
+                    role: 'assistant',
+                    text: `⚠️ I encountered an issue creating the research plan:\n\n\`${data.error || 'Unknown error'}\`\n\nThis might be a GCP authentication issue. Make sure you've run \`./gcp-login.sh\` first. You can also try a simpler query.`,
+                    timestamp: new Date(),
+                };
+                setMessages((prev) => [...prev, errorMsg]);
+            }
+        } catch (err: any) {
+            const errorMsg: Message = {
                 id: `asst-${Date.now()}`,
                 role: 'assistant',
-                text: response,
+                text: `⚠️ Network error — couldn't reach the server:\n\n\`${err.message}\`\n\nMake sure the dev server is running with \`npm run dev\`.`,
                 timestamp: new Date(),
             };
-            setMessages((prev) => [...prev, assistantMsg]);
-            setIsTyping(false);
-        }, delay);
+            setMessages((prev) => [...prev, errorMsg]);
+        }
+
+        setIsTyping(false);
     };
 
     const formatTime = (d: Date) =>
@@ -86,21 +117,23 @@ export default function ChatInterface() {
                             {msg.text.split('\n').map((line, i) => {
                                 // Bold
                                 const rendered = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                                // Code
+                                const withCode = rendered.replace(/`([^`]+)`/g, '<code style="background:var(--bg-input);padding:1px 5px;border-radius:3px;font-size:0.85em;color:var(--accent-cyan)">$1</code>');
                                 // Bullet
                                 if (line.startsWith('• ') || line.startsWith('- ')) {
                                     return (
-                                        <p key={i} className="ml-2 my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: '• ' + rendered.slice(2) }} />
+                                        <p key={i} className="ml-2 my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: '• ' + withCode.slice(2) }} />
                                     );
                                 }
                                 // Numbered
                                 if (/^\d+\.\s/.test(line)) {
                                     return (
-                                        <p key={i} className="ml-2 my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: rendered }} />
+                                        <p key={i} className="ml-2 my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: withCode }} />
                                     );
                                 }
                                 if (line === '') return <br key={i} />;
                                 return (
-                                    <p key={i} className="my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: rendered }} />
+                                    <p key={i} className="my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: withCode }} />
                                 );
                             })}
                             <span

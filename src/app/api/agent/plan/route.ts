@@ -1,10 +1,7 @@
 import { NextResponse } from 'next/server';
 import { VertexAI } from '@google-cloud/vertexai';
-import { NextResponse } from 'next/server';
-import { VertexAI } from '@google-cloud/vertexai';
 import { createSession } from '@/lib/firestore/stateEngine';
-import { ResearchSession, SubTask } from '@/types';
-
+import { SubTask } from '@/types';
 
 // Initialize Vertex AI
 // NOTE: Ensure process.env.GOOGLE_CLOUD_PROJECT is set or ADC is configured via gcp-login.sh
@@ -52,15 +49,14 @@ export async function POST(req: Request) {
 
         const requestBody = {
             contents: [{ role: 'user', parts: [{ text: query }] }],
-      systemInstruction: { role: 'system' as const, parts: [{ text: systemInstruction }] }
-
+            systemInstruction: { role: 'system' as const, parts: [{ text: systemInstruction }] }
         };
 
         const response = await generativeModel.generateContent(requestBody);
 
         // Safety check parsing
         const candidateText = response.response.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
-        let plan = [];
+        let plan: SubTask[] = [];
         try {
             plan = JSON.parse(candidateText);
         } catch (e) {
@@ -68,10 +64,18 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Failed to generate a valid plan' }, { status: 500 });
         }
 
-        // TODO: In a later step, we will save this initial state to Firestore here
+        // Persist the session to Firestore and get the session ID
+        let sessionId: string | null = null;
+        try {
+            sessionId = await createSession(query, plan);
+        } catch (firestoreError) {
+            console.warn('Firestore save failed (continuing without persistence):', firestoreError);
+            sessionId = `local-${Date.now()}`;
+        }
 
         return NextResponse.json({
             status: 'success',
+            sessionId,
             plan: plan
         });
 

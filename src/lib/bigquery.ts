@@ -1,47 +1,55 @@
 import { BigQuery } from '@google-cloud/bigquery';
 import { BigQueryDiseaseResponse } from './types';
 
+const LOG_PREFIX = '🗄️ [BigQuery]';
+
 const bigqueryClient = new BigQuery({
   projectId: process.env.GOOGLE_CLOUD_PROJECT || 'benchspark-data-1771447466',
 });
 
 /**
  * Fetches disease-target association data from BigQuery.
- * 
- * Queries the `primekg` dataset in the hackathon project.
- * Falls back to realistic demo data if BigQuery is not accessible.
  */
 export async function fetchDiseaseTargetsFromBigQuery(diseaseId: string): Promise<BigQueryDiseaseResponse> {
-  // Try the Open Targets public dataset first, then the local primekg dataset
+  console.log(`${LOG_PREFIX} Querying for disease: "${diseaseId}"`);
+  console.log(`${LOG_PREFIX} Using project: ${process.env.GOOGLE_CLOUD_PROJECT || 'benchspark-data-1771447466'}`);
+
   const queries = [
-    // Query 1: Try Open Targets public dataset (disease-target associations)
-    `SELECT
-      t.id AS targetId,
-      t.approvedSymbol AS targetSymbol,
-      a.score AS evidenceScore
-    FROM \`open-targets-prod.platform.associationByOverallDirect\` a
-    JOIN \`open-targets-prod.platform.targets\` t ON a.targetId = t.id
-    WHERE a.diseaseId = @diseaseId
-    ORDER BY a.score DESC
-    LIMIT 10`,
-    // Query 2: Try local primekg dataset (if populated)
-    `SELECT
-      x_id AS targetId,
-      x_name AS targetSymbol,
-      1.0 AS evidenceScore
-    FROM \`benchspark-data-1771447466.primekg.primekg\`
-    WHERE relation = 'associated_with'
-      AND y_name LIKE CONCAT('%', @diseaseId, '%')
-    LIMIT 10`,
+    {
+      name: 'Open Targets public dataset',
+      sql: `SELECT
+        t.id AS targetId,
+        t.approvedSymbol AS targetSymbol,
+        a.score AS evidenceScore
+      FROM \`open-targets-prod.platform.associationByOverallDirect\` a
+      JOIN \`open-targets-prod.platform.targets\` t ON a.targetId = t.id
+      WHERE a.diseaseId = @diseaseId
+      ORDER BY a.score DESC
+      LIMIT 10`
+    },
+    {
+      name: 'Local PrimeKG dataset',
+      sql: `SELECT
+        x_id AS targetId,
+        x_name AS targetSymbol,
+        1.0 AS evidenceScore
+      FROM \`benchspark-data-1771447466.primekg.primekg\`
+      WHERE relation = 'associated_with'
+        AND y_name LIKE CONCAT('%', @diseaseId, '%')
+      LIMIT 10`
+    },
   ];
 
-  for (const query of queries) {
+  for (const { name, sql } of queries) {
     try {
+      console.log(`${LOG_PREFIX} Trying query: ${name}...`);
       const [rows] = await bigqueryClient.query({
-        query,
+        query: sql,
         location: 'US',
         params: { diseaseId },
       });
+
+      console.log(`${LOG_PREFIX} ${name} returned ${rows.length} rows`);
 
       if (rows.length > 0) {
         const associatedTargets = rows.map((row: Record<string, unknown>) => ({
@@ -49,6 +57,11 @@ export async function fetchDiseaseTargetsFromBigQuery(diseaseId: string): Promis
           targetSymbol: String(row.targetSymbol || `Target_${String(row.targetId || '').substring(0, 8)}`),
           evidenceScore: Number(row.evidenceScore) || 0,
         }));
+
+        console.log(`${LOG_PREFIX} ✅ Found ${associatedTargets.length} targets from ${name}`);
+        associatedTargets.forEach((t, i) => {
+          console.log(`${LOG_PREFIX}    ${i + 1}. ${t.targetSymbol} (score: ${t.evidenceScore})`);
+        });
 
         return {
           diseaseId,
@@ -58,18 +71,15 @@ export async function fetchDiseaseTargetsFromBigQuery(diseaseId: string): Promis
         };
       }
     } catch (error) {
-      console.warn(`BigQuery query attempt failed, trying next:`, error instanceof Error ? error.message : error);
+      console.warn(`${LOG_PREFIX} ⚠️ ${name} failed:`, error instanceof Error ? error.message : error);
     }
   }
 
-  // Fallback: return scientifically-relevant demo data for IPF (Idiopathic Pulmonary Fibrosis)
-  // This ensures the frontend and agent always have data to work with during the hackathon
-  console.warn('All BigQuery queries failed, returning demo fallback data');
+  console.warn(`${LOG_PREFIX} ⚠️ All BigQuery queries failed — returning FALLBACK demo data`);
   return getDemoFallbackData(diseaseId);
 }
 
 function getDemoFallbackData(diseaseId: string): BigQueryDiseaseResponse {
-  // Realistic IPF-related targets for demo purposes
   const ipfTargets = [
     { targetId: 'ENSG00000163735', targetSymbol: 'CXCL5', evidenceScore: 0.92 },
     { targetId: 'ENSG00000163734', targetSymbol: 'CXCL6', evidenceScore: 0.88 },
@@ -80,6 +90,8 @@ function getDemoFallbackData(diseaseId: string): BigQueryDiseaseResponse {
     { targetId: 'ENSG00000141510', targetSymbol: 'TP53', evidenceScore: 0.71 },
     { targetId: 'ENSG00000170345', targetSymbol: 'FOS', evidenceScore: 0.68 },
   ];
+
+  console.log(`${LOG_PREFIX}    Fallback targets: ${ipfTargets.map(t => t.targetSymbol).join(', ')}`);
 
   return {
     diseaseId,
