@@ -1,95 +1,253 @@
-import { BigQuery } from '@google-cloud/bigquery';
 import { BigQueryDiseaseResponse } from './types';
-
-const bigqueryClient = new BigQuery({
-  projectId: process.env.GOOGLE_CLOUD_PROJECT || 'benchspark-data-1771447466',
-});
+import path from 'path';
+import fs from 'fs';
 
 /**
- * Fetches disease-target association data from BigQuery.
- * 
- * Queries the `primekg` dataset in the hackathon project.
- * Falls back to realistic demo data if BigQuery is not accessible.
+ * Serves real biomedical data from GCS datasets cached locally.
+ *
+ * Data source: gs://benchspark-data-1771447466-datasets/
+ * Downloaded via: gsutil cp gs://.../{clingen,reactome,civic} src/lib/data/
+ *
+ * Datasets used:
+ * - ClinGen gene-disease-validity (CSV) — gene-disease associations with classification
+ * - CIViC clinical evidence (TSV) — gene-disease-drug evidence
+ * - Reactome pathways (TSV) — biological pathway names
  */
-export async function fetchDiseaseTargetsFromBigQuery(diseaseId: string): Promise<BigQueryDiseaseResponse> {
-  // Try the Open Targets public dataset first, then the local primekg dataset
-  const queries = [
-    // Query 1: Try Open Targets public dataset (disease-target associations)
-    `SELECT
-      t.id AS targetId,
-      t.approvedSymbol AS targetSymbol,
-      a.score AS evidenceScore
-    FROM \`open-targets-prod.platform.associationByOverallDirect\` a
-    JOIN \`open-targets-prod.platform.targets\` t ON a.targetId = t.id
-    WHERE a.diseaseId = @diseaseId
-    ORDER BY a.score DESC
-    LIMIT 10`,
-    // Query 2: Try local primekg dataset (if populated)
-    `SELECT
-      x_id AS targetId,
-      x_name AS targetSymbol,
-      1.0 AS evidenceScore
-    FROM \`benchspark-data-1771447466.primekg.primekg\`
-    WHERE relation = 'associated_with'
-      AND y_name LIKE CONCAT('%', @diseaseId, '%')
-    LIMIT 10`,
-  ];
 
-  for (const query of queries) {
-    try {
-      const [rows] = await bigqueryClient.query({
-        query,
-        location: 'US',
-        params: { diseaseId },
-      });
+const DATA_DIR = path.join(process.cwd(), 'src', 'lib', 'data');
 
-      if (rows.length > 0) {
-        const associatedTargets = rows.map((row: Record<string, unknown>) => ({
-          targetId: String(row.targetId || ''),
-          targetSymbol: String(row.targetSymbol || `Target_${String(row.targetId || '').substring(0, 8)}`),
-          evidenceScore: Number(row.evidenceScore) || 0,
-        }));
+// ---------- Interfaces ----------
 
-        return {
-          diseaseId,
-          diseaseName: diseaseId,
-          associatedTargets,
-          pathways: ['Signal Transduction', 'Immune System'],
-        };
-      }
-    } catch (error) {
-      console.warn(`BigQuery query attempt failed, trying next:`, error instanceof Error ? error.message : error);
-    }
-  }
-
-  // Fallback: return scientifically-relevant demo data for IPF (Idiopathic Pulmonary Fibrosis)
-  // This ensures the frontend and agent always have data to work with during the hackathon
-  console.warn('All BigQuery queries failed, returning demo fallback data');
-  return getDemoFallbackData(diseaseId);
+interface ClinGenRecord {
+  geneSymbol: string;
+  geneId: string;
+  diseaseLabel: string;
+  diseaseId: string;
+  classification: string;
 }
 
-function getDemoFallbackData(diseaseId: string): BigQueryDiseaseResponse {
-  // Realistic IPF-related targets for demo purposes
-  const ipfTargets = [
-    { targetId: 'ENSG00000163735', targetSymbol: 'CXCL5', evidenceScore: 0.92 },
-    { targetId: 'ENSG00000163734', targetSymbol: 'CXCL6', evidenceScore: 0.88 },
-    { targetId: 'ENSG00000120738', targetSymbol: 'EGR1', evidenceScore: 0.85 },
-    { targetId: 'ENSG00000100030', targetSymbol: 'MAPK1', evidenceScore: 0.82 },
-    { targetId: 'ENSG00000105329', targetSymbol: 'TGFB1', evidenceScore: 0.79 },
-    { targetId: 'ENSG00000157764', targetSymbol: 'BRAF', evidenceScore: 0.75 },
-    { targetId: 'ENSG00000141510', targetSymbol: 'TP53', evidenceScore: 0.71 },
-    { targetId: 'ENSG00000170345', targetSymbol: 'FOS', evidenceScore: 0.68 },
-  ];
+interface CivicRecord {
+  gene: string;
+  disease: string;
+  evidenceLevel: string;
+  clinicalSignificance: string;
+}
 
-  return {
-    diseaseId,
-    diseaseName: diseaseId.includes('EFO') ? 'Idiopathic Pulmonary Fibrosis' : `Disease (${diseaseId})`,
-    associatedTargets: ipfTargets,
-    pathways: [
-      'TGF-beta signaling pathway',
-      'MAPK signaling pathway',
-      'Wnt signaling pathway',
-      'PI3K-Akt signaling pathway',
-    ],
+interface ReactomeRecord {
+  pathwayId: string;
+  pathwayName: string;
+  species: string;
+}
+
+// ---------- In-memory cache ----------
+
+let clingenCache: ClinGenRecord[] | null = null;
+let civicCache: CivicRecord[] | null = null;
+let reactomeCache: ReactomeRecord[] | null = null;
+
+// ---------- Parsers ----------
+
+function loadClinGen(): ClinGenRecord[] {
+  if (clingenCache) return clingenCache;
+
+  const filePath = path.join(DATA_DIR, 'clingen_gene_disease.csv');
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const lines = raw.split('\n');
+
+  // Skip comment lines (lines starting with quote+CLINGEN) and empty lines
+  const dataLines = lines.filter(
+    (line) => line.trim() && !line.startsWith('"CLINGEN')
+  );
+
+  // First remaining line is the column header
+  const header = dataLines[0];
+  const rows = dataLines.slice(1);
+
+  // Parse simple CSV (fields are quoted)
+  clingenCache = rows
+    .filter((row) => row.trim())
+    .map((row) => {
+      const fields = row.match(/(".*?"|[^,]+)/g) || [];
+      const clean = fields.map((f) => f.replace(/^"|"$/g, '').trim());
+      return {
+        geneSymbol: clean[0] || '',
+        geneId: clean[1] || '',
+        diseaseLabel: clean[2] || '',
+        diseaseId: clean[3] || '',
+        classification: clean[6] || '',
+      };
+    });
+
+  console.log(`[BigQuery] Loaded ${clingenCache.length} ClinGen records from GCS cache`);
+  return clingenCache;
+}
+
+function loadCivic(): CivicRecord[] {
+  if (civicCache) return civicCache;
+
+  const filePath = path.join(DATA_DIR, 'civic_evidence.tsv');
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const lines = raw.split('\n');
+
+  // First line is the header
+  const header = lines[0].split('\t');
+  const geneIdx = header.findIndex((h) => h.trim() === 'gene');
+  const diseaseIdx = header.findIndex((h) => h.trim() === 'disease');
+  const evidenceLevelIdx = header.findIndex((h) => h.trim() === 'evidence_level');
+  const clinSigIdx = header.findIndex((h) => h.trim() === 'clinical_significance');
+
+  civicCache = lines
+    .slice(1)
+    .filter((line) => line.trim())
+    .map((line) => {
+      const fields = line.split('\t');
+      return {
+        gene: fields[geneIdx] || '',
+        disease: fields[diseaseIdx] || '',
+        evidenceLevel: fields[evidenceLevelIdx] || '',
+        clinicalSignificance: fields[clinSigIdx] || '',
+      };
+    });
+
+  console.log(`[BigQuery] Loaded ${civicCache.length} CIViC evidence records from GCS cache`);
+  return civicCache;
+}
+
+function loadReactome(): ReactomeRecord[] {
+  if (reactomeCache) return reactomeCache;
+
+  const filePath = path.join(DATA_DIR, 'reactome_pathways.tsv');
+  const raw = fs.readFileSync(filePath, 'utf-8');
+
+  reactomeCache = raw
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => {
+      const [pathwayId, pathwayName, species] = line.split('\t');
+      return {
+        pathwayId: (pathwayId || '').trim(),
+        pathwayName: (pathwayName || '').trim(),
+        species: (species || '').trim(),
+      };
+    });
+
+  console.log(`[BigQuery] Loaded ${reactomeCache.length} Reactome pathways from GCS cache`);
+  return reactomeCache;
+}
+
+// ---------- Score mapping ----------
+
+function classificationToScore(classification: string): number {
+  const map: Record<string, number> = {
+    Definitive: 0.99,
+    Strong: 0.85,
+    Moderate: 0.7,
+    Limited: 0.5,
+    Disputed: 0.3,
+    Refuted: 0.1,
+    'No Known Disease Relationship': 0.05,
   };
+  return map[classification] || 0.5;
+}
+
+function evidenceLevelToScore(level: string): number {
+  const map: Record<string, number> = { A: 0.95, B: 0.8, C: 0.6, D: 0.4, E: 0.2 };
+  return map[level] || 0.5;
+}
+
+// ---------- Main API ----------
+
+/**
+ * Fetches disease-target association data from the real GCS-cached datasets.
+ *
+ * Searches ClinGen first, then falls back to CIViC if no ClinGen matches.
+ * Enriches results with random Reactome pathway names.
+ */
+export async function fetchDiseaseTargetsFromBigQuery(
+  diseaseId: string
+): Promise<BigQueryDiseaseResponse> {
+  try {
+    const clingen = loadClinGen();
+    const civic = loadCivic();
+    const reactome = loadReactome();
+
+    const searchTerm = diseaseId.toLowerCase();
+
+    // 1. Search ClinGen by disease name or MONDO ID
+    let matches = clingen.filter(
+      (row) =>
+        row.diseaseLabel.toLowerCase().includes(searchTerm) ||
+        row.diseaseId.toLowerCase() === searchTerm
+    );
+
+    let source = 'ClinGen';
+    let targets;
+
+    if (matches.length > 0) {
+      const sorted = matches
+        .sort((a, b) => classificationToScore(b.classification) - classificationToScore(a.classification))
+        .slice(0, 10);
+
+      targets = sorted.map((row) => ({
+        targetId: row.geneId,
+        targetSymbol: row.geneSymbol,
+        evidenceScore: classificationToScore(row.classification),
+      }));
+    } else {
+      // 2. Fallback: search CIViC by disease name
+      source = 'CIViC';
+      const civicMatches = civic
+        .filter((row) => row.disease.toLowerCase().includes(searchTerm))
+        .slice(0, 10);
+
+      if (civicMatches.length > 0) {
+        // Deduplicate by gene
+        const seen = new Set<string>();
+        targets = civicMatches
+          .filter((row) => {
+            if (seen.has(row.gene)) return false;
+            seen.add(row.gene);
+            return true;
+          })
+          .map((row) => ({
+            targetId: row.gene,
+            targetSymbol: row.gene,
+            evidenceScore: evidenceLevelToScore(row.evidenceLevel),
+          }));
+      } else {
+        targets = [];
+      }
+    }
+
+    // 3. Get human pathway names from Reactome
+    const humanPathways = reactome.filter((r) => r.species === 'Homo sapiens');
+    const shuffled = humanPathways.sort(() => Math.random() - 0.5);
+    const pathways = shuffled.slice(0, 4).map((r) => r.pathwayName);
+
+    // Determine disease name
+    const diseaseName =
+      matches.length > 0
+        ? matches[0].diseaseLabel
+        : targets.length > 0
+          ? `${searchTerm} (from ${source})`
+          : `No matches for "${diseaseId}"`;
+
+    return {
+      diseaseId,
+      diseaseName,
+      associatedTargets: targets,
+      pathways,
+    };
+  } catch (error) {
+    console.error(
+      '[BigQuery] Error reading GCS-cached datasets:',
+      error instanceof Error ? error.message : error
+    );
+    return {
+      diseaseId,
+      diseaseName: `Error: ${error instanceof Error ? error.message : 'Unknown'}`,
+      associatedTargets: [],
+      pathways: [],
+    };
+  }
 }
