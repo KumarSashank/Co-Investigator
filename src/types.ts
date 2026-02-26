@@ -9,7 +9,11 @@ export type AgentToolName =
   | 'openalex_get_author'
   | 'pubmed_search'
   | 'pubmed_fetch'
-  | 'bigquery'  // Keeping hackathon tool
+  | 'bigquery'
+  | 'hitl_pause'
+  | 'firestore_get_session'
+  | 'firestore_upsert_session'
+  | 'gcs_write'
   | 'none';
 
 export type StepIntent =

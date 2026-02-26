@@ -7,6 +7,22 @@ import { openalex_search_authors, openalex_get_author } from '@/lib/openalex';
 
 const LOG = '🤖 [Execute]';
 
+/**
+ * Looks through previous completed steps in the session to find data.
+ * This is the cross-step chaining mechanism that lets downstream tools
+ * use outputs from upstream tools.
+ */
+function findPreviousStepData(session: any, currentStepId: string): Record<string, any> {
+    const allResults: Record<string, any> = {};
+    for (const step of session.plan) {
+        if (step.id === currentStepId) break; // Only look at earlier steps
+        if (step.status === 'DONE' && step.result_data) {
+            allResults[step.id] = step.result_data;
+        }
+    }
+    return allResults;
+}
+
 export async function POST(req: Request) {
     logger.info(`\n${'═'.repeat(60)}`);
 
@@ -29,18 +45,16 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Task not found in session plan' }, { status: 404 });
         }
 
-        logger.info(`${LOG} Executing Tool(s): ${step.tools.join(', ')} | Intent: ${step.intent}`);
+        logger.info(`${LOG} Step: "${step.name}" | Tools: [${step.tools.join(', ')}] | Intent: ${step.intent}`);
 
         // Handle explicit hitl_pause tool requested in the plan
         if (step.tools.includes('hitl_pause')) {
             logger.info(`${LOG} ⏸️ HITL Pause requested by plan`);
-
-            // Mark step as running so it pauses here, but we set session awaiting_confirmation
             await updateSubTask(sessionId, taskId, { status: 'RUNNING' });
             await firestore_upsert_session(sessionId, {
                 awaiting_confirmation: true,
                 checkpoint_question: step.inputs.question || "Do you want to proceed?",
-                checkpoint_options: step.inputs.options || ["Yes", "No"]
+                checkpoint_options: step.inputs.options || ["Approve & Proceed", "Cancel Execution"]
             });
 
             return NextResponse.json({
@@ -54,35 +68,98 @@ export async function POST(req: Request) {
         // 2. Mark step RUNNING
         await updateSubTask(sessionId, taskId, { status: 'RUNNING' });
 
-        // 3. Execute the appropriate tools and collect results
+        // 3. Gather previous step outputs for cross-step chaining
+        const previousData = findPreviousStepData(session, taskId);
+        logger.info(`${LOG} Previous step data available from: [${Object.keys(previousData).join(', ')}]`);
+
+        // 4. Execute the appropriate tools and collect results
         const combinedResults: Record<string, any> = {};
 
         for (const toolName of step.tools) {
-            logger.info(`${LOG} Running specific tool: ${toolName}`);
+            logger.info(`${LOG} 🔧 Running tool: ${toolName}`);
 
             try {
                 if (toolName === 'pubmed_search') {
-                    const res = await pubmed_search(step.inputs.query, step.inputs.from_year, step.inputs.to_year);
+                    // Use the user_request as fallback query, extract meaningful terms
+                    const query = step.inputs.query || session.user_request;
+                    const fromYear = step.inputs.from_year || (new Date().getFullYear() - 3);
+                    const res = await pubmed_search(query, fromYear, step.inputs.to_year);
                     combinedResults.pubmed_search = res;
+                    logger.info(`${LOG}    → Found ${res.length} PMIDs`);
                 }
                 else if (toolName === 'pubmed_fetch') {
-                    // It can get pmids directly from inputs or from a previous step's artifact...
-                    // For now, assume inputs.pmids
-                    const pmids = step.inputs.pmids || [];
-                    const res = await pubmed_fetch(pmids);
-                    combinedResults.pubmed_fetch = res;
+                    // Chain: get PMIDs from a prior pubmed_search step if not in inputs
+                    let pmids = step.inputs.pmids || [];
+                    // Handle CHAIN_FROM_PREVIOUS sentinel from the AI planner
+                    if (pmids === 'CHAIN_FROM_PREVIOUS' || (Array.isArray(pmids) && pmids.length === 0)) {
+                        pmids = [];
+                        // Look for PMIDs from any previous step
+                        for (const data of Object.values(previousData)) {
+                            if (data.pubmed_search && Array.isArray(data.pubmed_search) && data.pubmed_search.length > 0) {
+                                pmids = data.pubmed_search;
+                                logger.info(`${LOG}    → Chained ${pmids.length} PMIDs from previous pubmed_search step`);
+                                break;
+                            }
+                        }
+                    }
+                    if (pmids.length === 0) {
+                        logger.warn(`${LOG}    ⚠️ No PMIDs available for pubmed_fetch — skipping`);
+                        combinedResults.pubmed_fetch = { warning: 'No PMIDs to fetch' };
+                    } else {
+                        const res = await pubmed_fetch(pmids);
+                        combinedResults.pubmed_fetch = res;
+                        logger.info(`${LOG}    → Fetched ${res.length} detailed articles`);
+                    }
                 }
                 else if (toolName === 'openalex_search_authors') {
-                    const res = await openalex_search_authors(step.inputs.query, step.inputs.from_year, step.inputs.to_year, step.inputs.keywords);
+                    const query = step.inputs.query || session.user_request;
+                    const res = await openalex_search_authors(query, step.inputs.from_year, step.inputs.to_year, step.inputs.keywords);
                     combinedResults.openalex_search_authors = res;
+                    logger.info(`${LOG}    → Found ${res.length} candidate authors`);
                 }
                 else if (toolName === 'openalex_get_author') {
-                    const res = await openalex_get_author(step.inputs.author_id);
-                    combinedResults.openalex_get_author = res;
+                    // Chain: pull author IDs from previous openalex_search_authors
+                    let authorId = step.inputs.author_id;
+                    const authorIds: string[] = [];
+
+                    if (!authorId || authorId === 'FROM_PREVIOUS_STEP' || authorId === 'CHAIN_FROM_PREVIOUS' || authorId === '') {
+                        // Find author IDs from previous search step
+                        for (const data of Object.values(previousData)) {
+                            if (data.openalex_search_authors && Array.isArray(data.openalex_search_authors)) {
+                                for (const candidate of data.openalex_search_authors.slice(0, 5)) {
+                                    if (candidate.authorId) {
+                                        authorIds.push(candidate.authorId);
+                                    }
+                                }
+                                break;
+                            }
+                        }
+
+                        if (authorIds.length === 0) {
+                            logger.warn(`${LOG}    ⚠️ No author IDs available from previous steps — skipping`);
+                            combinedResults.openalex_get_author = { warning: 'No author IDs found from previous search' };
+                        } else {
+                            logger.info(`${LOG}    → Chained ${authorIds.length} author IDs from previous search step`);
+                            // Fetch details for top candidates
+                            const detailedAuthors = [];
+                            for (const aid of authorIds) {
+                                try {
+                                    const detail = await openalex_get_author(aid);
+                                    detailedAuthors.push(detail);
+                                } catch (e: any) {
+                                    logger.error(`${LOG}    ❌ Failed to fetch author ${aid}: ${e.message}`);
+                                }
+                            }
+                            combinedResults.openalex_get_author = detailedAuthors;
+                            logger.info(`${LOG}    → Retrieved ${detailedAuthors.length} detailed author profiles`);
+                        }
+                    } else {
+                        // Direct author ID provided
+                        const detail = await openalex_get_author(authorId);
+                        combinedResults.openalex_get_author = detail;
+                    }
                 }
                 else if (toolName === 'bigquery') {
-                    // Call our internal hackathon api as a fallback wrapper for now, 
-                    // or implement direct BQ call here if needed
                     const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
                     const disease = step.inputs.disease || step.inputs.query || session.user_request;
                     const bqRes = await fetch(`${baseUrl}/api/tools/bigquery?disease=${encodeURIComponent(disease)}`);
@@ -92,10 +169,13 @@ export async function POST(req: Request) {
                     combinedResults.none = { message: 'Synthesis step triggered' };
                 }
                 else if (toolName === 'vertex_search_retrieve') {
-                    // Since we don't have the real Vertex Search Datastore UUID right now, mock it
                     combinedResults.vertex_search_retrieve = {
                         message: "Vertex Search grounding will be applied at final report generation time."
                     };
+                }
+                else {
+                    logger.warn(`${LOG}    ⚠️ Unknown tool: ${toolName} — skipping`);
+                    combinedResults[toolName] = { warning: `Unknown tool: ${toolName}` };
                 }
             } catch (toolError: any) {
                 logger.error({ toolName, error: toolError.message }, `${LOG} ❌ Tool failed`);
@@ -103,28 +183,26 @@ export async function POST(req: Request) {
             }
         }
 
-        // 4. Write raw tool outputs to GCS (simulate DeepResearch observability)
+        // 5. Write raw tool outputs to GCS
         const gcsPath = `runs/${sessionId}/${taskId}.json`;
         let artifactUri = '';
         try {
             artifactUri = await gcs_write(gcsPath, combinedResults);
-
-            // Update session artifacts dictionary
             const sessionArtifacts = session.artifacts || {};
             sessionArtifacts[taskId] = artifactUri;
             await firestore_upsert_session(sessionId, { artifacts: sessionArtifacts });
         } catch (gcsError: any) {
-            logger.error({ error: gcsError.message }, `${LOG} ❌ GCS Write Failed. Continuing anyway...`);
-            artifactUri = `error://gcs_write_failed`;
+            logger.warn(`${LOG} ⚠️ GCS write failed (non-fatal): ${gcsError.message}`);
+            artifactUri = `local://no-gcs`;
         }
 
-        // 5. Mark task DONE
+        // 6. Mark task DONE
         await updateSubTask(sessionId, taskId, {
             status: 'DONE',
-            result_data: combinedResults // Kept in state for local rendering convenience
+            result_data: combinedResults
         });
 
-        logger.info(`${LOG} ✅ Task ${taskId} DONE. Artifact Written: ${artifactUri}`);
+        logger.info(`${LOG} ✅ Step ${taskId} DONE. Artifact: ${artifactUri}`);
 
         return NextResponse.json({
             status: 'success',

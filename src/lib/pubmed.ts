@@ -37,12 +37,14 @@ export function extractContactInfoFromXml(xmlText: string, pmid: string): { affi
 
 /**
  * pubmed_search(query, from_year?, to_year?)
- * Returns PMIDs + metadata for a given search query matching DeepResearch specs.
+ * Returns PMIDs + metadata for a given search query.
+ * IMPORTANT: The AI planner is responsible for generating proper API-ready queries.
+ * This function trusts the query it receives.
  */
 export async function pubmed_search(query: string, from_year?: number, to_year?: number): Promise<string[]> {
     logger.info({ query, from_year, to_year }, `${LOG_PREFIX} pubmed_search called`);
 
-    // Construct date string if provided
+    // Construct date filter if provided
     let dateFilter = '';
     if (from_year && to_year) {
         dateFilter = ` AND ("${from_year}/01/01"[Date - Publication] : "${to_year}/12/31"[Date - Publication])`;
