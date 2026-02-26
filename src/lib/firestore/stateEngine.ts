@@ -1,5 +1,5 @@
 import { Firestore } from '@google-cloud/firestore';
-import { ResearchSession, SubTask } from '../../../context/shared_context.md'; // Virtual import for context mapping
+import { ResearchSession, SubTask } from '@/lib/types'; // Import from actual types file
 
 // Note: Ensure process.env.GOOGLE_CLOUD_PROJECT is set or ADC is configured
 const firestore = new Firestore({
@@ -45,14 +45,14 @@ export async function updateSession(sessionId: string, updates: Partial<Research
 export async function updateSubTask(sessionId: string, taskId: string, taskUpdates: Partial<SubTask>) {
     const sessionRef = firestore.collection(SESSIONS_COLLECTION).doc(sessionId);
 
-    await firestore.runTransaction(async (t) => {
+    await firestore.runTransaction(async (t: any) => {
         const doc = await t.get(sessionRef);
         if (!doc.exists) throw new Error("Session does not exist!");
 
         const data = doc.data() as ResearchSession;
         const currentPlan = data.plan;
 
-        const updatedPlan = currentPlan.map(task => {
+        const updatedPlan = currentPlan.map((task: SubTask) => {
             if (task.id === taskId) {
                 return { ...task, ...taskUpdates };
             }
@@ -62,7 +62,7 @@ export async function updateSubTask(sessionId: string, taskId: string, taskUpdat
         // Determine if we need to pause for HITL
         // Example logic: if any task completes, pause before the next one if it requires User Confirmation
         let newStatus = data.status;
-        const allCompleted = updatedPlan.every(t => t.status === 'completed' || t.status === 'failed');
+        const allCompleted = updatedPlan.every((t: SubTask) => t.status === 'completed' || t.status === 'failed');
 
         if (allCompleted) {
             newStatus = 'completed';

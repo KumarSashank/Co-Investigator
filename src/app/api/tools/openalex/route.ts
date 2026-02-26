@@ -1,30 +1,23 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { fetchAuthorFromOpenAlex } from '@/lib/openalex';
 
 /**
  * GET /api/tools/openalex
  * MCP Tool for fetching researcher publication metrics from OpenAlex
- * Note to Backend Lead (Cursor):
- * 1. Implement external API calls here.
- * 2. Return data exactly matching 'OpenAlexAuthorResponse' from shared_context.md
  */
-export async function GET(req: Request) {
-    const { searchParams } = new URL(req.url);
-    const keyword = searchParams.get('keyword') || 'disease';
+export async function GET(req: NextRequest) {
+    try {
+        const searchParams = req.nextUrl.searchParams;
+        const authorName = searchParams.get('author') || searchParams.get('authorName') || searchParams.get('keyword') || 'Dr. Mock';
 
-    const mockResponse = {
-        authorId: `A-MOCK-AUTHOR-X99-${keyword}`,
-        displayName: `Dr. Mock Researcher (${keyword})`,
-        currentInstitution: 'Mock University of Bioinformatics',
-        metrics: {
-            worksCount: 142,
-            citedByCount: 4500,
-            hIndex: 35
-        },
-        recentPublications: [
-            { title: `Analysis of ${keyword} Progression`, year: 2024, citationCount: 12 },
-            { title: `Novel therapeutic targets in ${keyword}`, year: 2023, citationCount: 45 }
-        ]
-    };
+        const data = await fetchAuthorFromOpenAlex(authorName);
 
-    return NextResponse.json(mockResponse);
+        return NextResponse.json(data);
+    } catch (error: unknown) {
+        console.error('OpenAlex API Tool Error:', error);
+        return NextResponse.json(
+            { error: 'Internal Server Error while querying OpenAlex.', details: error instanceof Error ? error.message : String(error) },
+            { status: 500 }
+        );
+    }
 }
