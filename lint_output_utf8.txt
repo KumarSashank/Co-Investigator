@@ -1,0 +1,31 @@
+﻿
+> co-investigator@0.1.0 lint
+> eslint
+
+
+C:\Users\gotti\Desktop\Grad Project\Co-Investigator\src\app\api\agent\plan\route.ts
+   3:10  warning  'ResearchSession' is defined but never used  @typescript-eslint/no-unused-vars
+   3:27  warning  'SubTask' is defined but never used          @typescript-eslint/no-unused-vars
+  61:18  warning  'e' is defined but never used                @typescript-eslint/no-unused-vars
+  73:21  error    Unexpected any. Specify a different type     @typescript-eslint/no-explicit-any
+
+C:\Users\gotti\Desktop\Grad Project\Co-Investigator\src\app\api\tools\bigquery\route.ts
+  16:21  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\gotti\Desktop\Grad Project\Co-Investigator\src\app\api\tools\openalex\route.ts
+  16:21  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\gotti\Desktop\Grad Project\Co-Investigator\src\app\api\tools\pubmed\route.ts
+  16:21  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\gotti\Desktop\Grad Project\Co-Investigator\src\lib\bigquery.ts
+  39:40  error  Parsing error: Invalid character
+
+C:\Users\gotti\Desktop\Grad Project\Co-Investigator\src\lib\pubmed.ts
+  36:68  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\gotti\Desktop\Grad Project\Co-Investigator\src\lib\types.ts
+  18:18  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+Γ£û 10 problems (7 errors, 3 warnings)
+
