@@ -13,7 +13,7 @@ export interface ResearchSession {
 export interface SubTask {
     id: string; // e.g., "step-1"
     description: string; // e.g., "Query BigQuery for IPF targets"
-    toolToUse: 'bigquery' | 'openalex' | 'pubmed' | 'none';
+    toolToUse: 'bigquery' | 'openalex' | 'pubmed' | 'datasets' | 'pubtator' | 'none';
     status: 'pending' | 'in_progress' | 'completed' | 'failed';
     resultData?: any; // The raw JSON returned by the tool
 }
