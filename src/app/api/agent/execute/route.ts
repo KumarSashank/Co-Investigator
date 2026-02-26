@@ -77,15 +77,16 @@ export async function POST(req: Request) {
 
         for (const toolName of step.tools) {
             logger.info(`${LOG} 🔧 Running tool: ${toolName}`);
+            logger.info(`${LOG}    Inputs: ${JSON.stringify(step.inputs)}`);
 
             try {
                 if (toolName === 'pubmed_search') {
-                    // Use the user_request as fallback query, extract meaningful terms
                     const query = step.inputs.query || session.user_request;
                     const fromYear = step.inputs.from_year || (new Date().getFullYear() - 3);
+                    logger.info(`${LOG}    📄 PubMed query: "${query}" | from_year: ${fromYear} | to_year: ${step.inputs.to_year || 'none'}`);
                     const res = await pubmed_search(query, fromYear, step.inputs.to_year);
                     combinedResults.pubmed_search = res;
-                    logger.info(`${LOG}    → Found ${res.length} PMIDs`);
+                    logger.info(`${LOG}    → Found ${res.length} PMIDs: [${res.slice(0, 5).join(', ')}${res.length > 5 ? '...' : ''}]`);
                 }
                 else if (toolName === 'pubmed_fetch') {
                     // Chain: get PMIDs from a prior pubmed_search step if not in inputs

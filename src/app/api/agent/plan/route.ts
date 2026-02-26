@@ -125,15 +125,25 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Research query is required' }, { status: 400 });
         }
 
+        const userPrompt = `Create a research plan for the following request using the required Plan DSL: "${query}"`;
         const requestBody = {
-            contents: [{ role: 'user', parts: [{ text: `Create a research plan for the following request using the required Plan DSL: "${query}"` }] }],
+            contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
             systemInstruction: { role: 'system' as const, parts: [{ text: SYSTEM_INSTRUCTION }] }
         };
 
+        console.log(`🧠 [Plan] Prompt sent to Gemini:\n${'─'.repeat(40)}`);
+        console.log(`   ${userPrompt}`);
+        console.log(`${'─'.repeat(40)}`);
         console.log(`🧠 [Plan] Calling Gemini 2.5 Flash...`);
         const response = await generativeModel.generateContent(requestBody);
 
         const candidateText = response.response.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+
+        // Log the RAW AI response
+        console.log(`\n🧠 [Plan] ━━━ RAW AI RESPONSE ━━━`);
+        console.log(candidateText);
+        console.log(`🧠 [Plan] ━━━ END RAW AI RESPONSE ━━━\n`);
+
         let parsedPlan: any = {};
         try {
             parsedPlan = JSON.parse(candidateText);
@@ -148,7 +158,34 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Invalid Plan DSL generated' }, { status: 500 });
         }
 
-        // Determine if there's a HITL step defined (to pre-set state if needed, though usually it happens during execution)
+        // Log per-step breakdown with queries
+        console.log(`🧠 [Plan] 📋 PLAN BREAKDOWN (${parsedPlan.plan.length} steps):`);
+        for (const step of parsedPlan.plan) {
+            console.log(`   ┌─ Step ${step.id}: ${step.name}`);
+            console.log(`   │  Intent: ${step.intent}`);
+            console.log(`   │  Tools: [${step.tools.join(', ')}]`);
+            if (step.inputs.query) {
+                console.log(`   │  🔍 Query: "${step.inputs.query}"`);
+            }
+            if (step.inputs.keywords && step.inputs.keywords.length > 0) {
+                console.log(`   │  🏷️  Keywords: [${step.inputs.keywords.join(', ')}]`);
+            }
+            if (step.inputs.from_year || step.inputs.to_year) {
+                console.log(`   │  📅 Year range: ${step.inputs.from_year || '?'} → ${step.inputs.to_year || '?'}`);
+            }
+            if (step.inputs.author_id) {
+                console.log(`   │  👤 Author ID: ${step.inputs.author_id}`);
+            }
+            if (step.inputs.pmids) {
+                console.log(`   │  📄 PMIDs: ${JSON.stringify(step.inputs.pmids)}`);
+            }
+            if (step.inputs.question) {
+                console.log(`   │  ❓ HITL Question: "${step.inputs.question}"`);
+            }
+            console.log(`   └─ Expected: [${(step.expected_output || []).join(', ')}]`);
+        }
+
+        // Determine if there's a HITL step defined
         const hasHitl = parsedPlan.plan.some((s: any) => s.tools.includes('hitl_pause'));
         if (hasHitl) {
             console.log(`🧠 [Plan] ✅ Plan includes explicit HITL checkpoint`);
