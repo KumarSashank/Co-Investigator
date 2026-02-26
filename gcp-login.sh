@@ -7,6 +7,9 @@ echo "====================================================="
 echo "  Co-Investigator - Google Cloud Local Authentication"
 echo "====================================================="
 
+# Temporarily add common install locations to PATH so the script can find gcloud
+export PATH="$PATH:$HOME/Downloads/google-cloud-sdk/bin:$HOME/google-cloud-sdk/bin"
+
 echo "Checking for gcloud CLI..."
 if ! command -v gcloud &> /dev/null
 then
