@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { VertexAI, Schema } from '@google-cloud/vertexai';
 import { createSession } from '@/lib/firestore/stateEngine';
+import { withVertexRetry } from '@/lib/vertex/retry';
 import { DeepResearchPlan } from '@/types';
 
 // Initialize Vertex AI
@@ -161,7 +162,7 @@ export async function POST(req: Request) {
         console.log(`   ${userPrompt}`);
         console.log(`${'─'.repeat(40)}`);
         console.log(`🧠 [Plan] Calling Gemini 2.5 Flash...`);
-        const response = await generativeModel.generateContent(requestBody);
+        const response = await withVertexRetry('Plan Generation', () => generativeModel.generateContent(requestBody));
 
         const candidateText = response.response.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
 

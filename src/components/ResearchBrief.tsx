@@ -110,6 +110,19 @@ export default function ResearchBrief({ markdown, groundingScore }: ResearchBrie
                 <GroundingScore score={groundingScore} />
             </div>
 
+            {/* Grounding Guardrails Banner */}
+            <div className="rounded-lg border border-[var(--accent-green)]/20 bg-[var(--accent-green)]/5 p-3 flex items-start gap-3">
+                <span className="text-base shrink-0 mt-0.5">🛡️</span>
+                <div>
+                    <p className="text-[10px] font-bold text-[var(--accent-green)] uppercase tracking-wider mb-1">Grounding & Guardrails</p>
+                    <p className="text-[10px] text-[var(--text-secondary)] leading-relaxed">
+                        This report is generated using <strong>Google Search Grounding</strong> for external fact verification.
+                        All claims reference retrieved data from BigQuery, OpenAlex, and PubMed — no fabricated citations.
+                        Each step was processed by a domain-specialist AI agent with source provenance tracking.
+                    </p>
+                </div>
+            </div>
+
             {/* Markdown Content */}
             <div className="prose-dark">
                 <SimpleMarkdown content={markdown} />
@@ -145,6 +158,52 @@ export default function ResearchBrief({ markdown, groundingScore }: ResearchBrie
             </div>
         </div>
     );
+}
+
+/* ---- Markdown → HTML for PDF Export ---- */
+function markdownToHtml(md: string): string {
+    let html = md
+        // Escape HTML entities first
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    // Tables: process before other block elements
+    html = html.replace(/^(\|.+\|)\n(\|[\s\-:|]+\|)\n((?:\|.+\|\n?)+)/gm, (_match, header, _sep, body) => {
+        const headerCells = header.split('|').filter((c: string) => c.trim()).map((c: string) => `<th>${c.trim()}</th>`).join('');
+        const rows = body.trim().split('\n').map((row: string) => {
+            const cells = row.split('|').filter((c: string) => c.trim()).map((c: string) => `<td>${c.trim()}</td>`).join('');
+            return `<tr>${cells}</tr>`;
+        }).join('');
+        return `<table><thead><tr>${headerCells}</tr></thead><tbody>${rows}</tbody></table>`;
+    });
+
+    html = html
+        // Headers
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+        // Horizontal rules
+        .replace(/^---+$/gm, '<hr/>')
+        // Bold & Italic
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        // Inline code
+        .replace(/`(.+?)`/g, '<code>$1</code>')
+        // Links
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+        // Unordered lists
+        .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
+        // Numbered lists
+        .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+        // Wrap consecutive <li> in <ul>
+        .replace(/((?:<li>.+<\/li>\n?)+)/g, '<ul>$1</ul>')
+        // Paragraphs: lines not already wrapped in block elements
+        .replace(/^(?!<[hultdoa]|<\/|<hr)(.+)$/gm, '<p>$1</p>')
+        // Clean up double line breaks
+        .replace(/\n{2,}/g, '\n');
+
+    return html;
 }
 
 /* ---- Grounding Score Ring ---- */

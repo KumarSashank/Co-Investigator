@@ -63,6 +63,22 @@ export interface HitlApprovalPayload {
   userFeedback?: string;
 }
 
+// ---- Synthesis Board / Curation Types ----
+export type PinnedItemType = 'target' | 'researcher' | 'paper' | 'note';
+
+export interface PinnedItem {
+  id: string;
+  type: PinnedItemType;
+  title: string;
+  subtitle?: string;
+  metrics?: Record<string, string | number>;
+  sourceStepId?: string; // Which execution step found this
+  content?: string; // AI summary or explicit content
+  raw_data?: any; // The original JSON object for deep drill
+  pinnedAt: string;
+}
+
+
 // ---- Tool Outputs (API Responses) ----
 export interface BigQueryDiseaseResponse {
   diseaseId: string;

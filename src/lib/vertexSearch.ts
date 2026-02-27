@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { withVertexRetry } from '@/lib/vertex/retry';
 
 /**
  * Vertex AI Search (Discovery Engine) Integration
@@ -178,7 +179,7 @@ Provide a structured summary with specific facts, citing sources where available
 
     try {
         logger.info(`${LOG} 🌐 Running Gemini grounded search for: "${query}"`);
-        const response = await model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] });
+        const response = await withVertexRetry('Gemini Grounded Search', () => model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }));
         const text = response.response.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
         // Extract grounding metadata if available

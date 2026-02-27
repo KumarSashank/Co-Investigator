@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { VertexAI } from '@google-cloud/vertexai';
 import { firestore_get_session, firestore_upsert_session } from '@/lib/firestore/stateEngine';
+import { withVertexRetry } from '@/lib/vertex/retry';
 import { logger } from '@/lib/logger';
 
 const vertexAI = new VertexAI({
@@ -140,7 +141,7 @@ export async function POST(req: Request) {
 
         let reportMarkdown: string;
         try {
-            const response = await generativeModel.generateContent(requestBody);
+            const response = await withVertexRetry('Report Generation (Primary)', () => generativeModel.generateContent(requestBody));
             reportMarkdown = response.response.candidates?.[0]?.content?.parts?.[0]?.text || "Failed to generate report text.";
         } catch (primaryError: any) {
             // If the googleSearch grounding tool fails, retry WITHOUT it
@@ -149,7 +150,7 @@ export async function POST(req: Request) {
             const fallbackModel = vertexAI.getGenerativeModel({
                 model: 'gemini-2.0-flash', // Faster, no grounding tool
             });
-            const fallbackResponse = await fallbackModel.generateContent(requestBody);
+            const fallbackResponse = await withVertexRetry('Report Generation (Fallback)', () => fallbackModel.generateContent(requestBody));
             reportMarkdown = fallbackResponse.response.candidates?.[0]?.content?.parts?.[0]?.text || "Failed to generate report text.";
             reportMarkdown += "\n\n> ⚠️ *Note: This report was generated without Google Search Grounding due to a temporary service issue.*";
         }

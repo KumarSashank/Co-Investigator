@@ -277,6 +277,8 @@ export async function POST(req: Request) {
                 pubmed_results: combinedResults.pubmed_search?.length || combinedResults.pubmed_fetch?.length || 0,
                 openalex_authors: combinedResults.openalex_search_authors?.length || combinedResults.openalex_get_author?.length || 0,
                 bigquery_targets: combinedResults.bigquery?.associatedTargets?.length || 0,
+                bigquery_drugs: combinedResults.bigquery?.drugPipeline?.length || 0,
+                bigquery_druggability: combinedResults.bigquery?.targetDruggability?.length || 0,
             },
             artifact_uri: artifactUri,
         };

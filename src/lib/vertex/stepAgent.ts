@@ -1,5 +1,6 @@
 import { VertexAI } from '@google-cloud/vertexai';
 import { logger } from '@/lib/logger';
+import { withVertexRetry } from '@/lib/vertex/retry';
 
 /**
  * Step-Level Specialist Agent
@@ -147,10 +148,10 @@ Now perform your specialist analysis.
     try {
         logger.info(`${LOG} 🧬 Running ${stepIntent} specialist agent...`);
 
-        const response = await agentModel.generateContent({
+        const response = await withVertexRetry(`${stepIntent} Agent Analysis`, () => agentModel.generateContent({
             contents: [{ role: 'user', parts: [{ text: contextMessage }] }],
             systemInstruction: { role: 'system' as const, parts: [{ text: specialistPrompt }] }
-        });
+        }));
 
         const analysisText = response.response.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
 
