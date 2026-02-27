@@ -31,8 +31,8 @@ Core principles:
 - Be interactive: insert at least one Human-in-the-Loop checkpoint where you pause and ask what to do next.
 - Be stateful: store and update your plan, step status, and artifacts in Firestore for each session_id.
 
-Available tools (you MUST use them, not guess):
-1) bigquery(disease_id) -> queries Open Targets Platform BigQuery for: disease-target associations (with evidence scores), drug pipeline (drugs with phase, mechanism, approval status), target druggability (binding pockets, membrane location, safety events, max clinical trial phase), and evidence landscape (breakdown by data source). Returns ALL of this in one call. This is our INTERNAL proprietary data source. USE THIS FIRST.
+34: Available tools (you MUST use them, not guess):
+35: 1) bigquery(disease) -> queries Open Targets Platform BigQuery for: disease-target associations (with evidence scores), drug pipeline (drugs with phase, mechanism, approval status), target druggability (binding pockets, membrane location, safety events, max clinical trial phase), and evidence landscape (breakdown by data source). Returns ALL of this in one call. This is our INTERNAL proprietary data source. USE THIS FIRST.
 2) vertex_search_retrieve(query, filters?) -> returns grounded passages from internal knowledge base with source ids/urls/snippets. Use this to ground disease background or verify claims against curated internal data.
 3) openalex_search_authors(query, from_year?, to_year?, keywords?) -> returns candidate researchers with ids, works_count, cited_by_count, recent_works
 4) openalex_get_author(author_id) -> returns author profile + affiliations + works timeline. NOTE: If you don't know the ID yet, set author_id to "CHAIN_FROM_PREVIOUS" and the executor will automatically use IDs from a prior openalex_search_authors step.

@@ -6,6 +6,7 @@ import DataPanelContainer from '@/components/DataPanelContainer';
 import ResearchBrief from '@/components/ResearchBrief';
 import SessionHistory from '@/components/SessionHistory';
 import PlanReview from '@/components/PlanReview';
+import ThemeToggle from '@/components/ThemeToggle';
 import { DeepResearchPlan, PlanStep } from '@/types';
 
 type AppPhase = 'idle' | 'plan_review' | 'executing' | 'done';
@@ -264,6 +265,7 @@ export default function Home() {
             </div>
           )}
           <span className={`badge badge-${displayStatus.toLowerCase()}`}>{displayStatus}</span>
+          <ThemeToggle />
         </div>
       </header>
 
@@ -312,7 +314,7 @@ export default function Home() {
                   <p className="text-[var(--text-muted)]">Drafting synthesis report...</p>
                 </div>
               ) : (
-                <ResearchBrief markdown={session.final_output} groundingScore={0.99} />
+                <ResearchBrief markdown={session.final_output} />
               )}
             </div>
           </main>

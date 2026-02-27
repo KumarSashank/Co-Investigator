@@ -73,7 +73,7 @@ export default function ChatInterface({ onPlanCreated }: ChatInterfaceProps) {
                 const assistantMsg: Message = {
                     id: `asst-${Date.now()}`,
                     role: 'assistant',
-                    text: `I've created a research plan with **${planObj.plan.length} steps**:\n\n${planSteps}\n\nStarting execution now — check the Investigation Plan panel on the right to track progress. I will pause when human confirmation is needed.`,
+                    text: `I've created a research plan with [tooltip:The number of distinct, sequential tool actions the planner agent determined are necessary to complete this specific investigation.](${planObj.plan.length} steps):\n\n${planSteps}\n\nStarting execution now — check the Investigation Plan panel on the right to track progress. I will pause when human confirmation is needed.`,
                     timestamp: new Date(),
                 };
                 setMessages((prev) => [...prev, assistantMsg]);
@@ -122,21 +122,24 @@ export default function ChatInterface({ onPlanCreated }: ChatInterfaceProps) {
                                 const rendered = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
                                 // Code
                                 const withCode = rendered.replace(/`([^`]+)`/g, '<code style="background:var(--bg-input);padding:1px 5px;border-radius:3px;font-size:0.85em;color:var(--accent-cyan)">$1</code>');
+                                // Tooltip
+                                const withTooltip = withCode.replace(/\[tooltip:(.*?)\]\((.*?)\)/g, '<span title="$1" style="border-bottom: 1px dotted var(--text-muted); cursor: help;" class="hover:border-[var(--accent-cyan)] transition-colors">$2</span>');
+
                                 // Bullet
                                 if (line.startsWith('• ') || line.startsWith('- ')) {
                                     return (
-                                        <p key={i} className="ml-2 my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: '• ' + withCode.slice(2) }} />
+                                        <p key={i} className="ml-2 my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: '• ' + withTooltip.slice(2) }} />
                                     );
                                 }
                                 // Numbered
                                 if (/^\d+\.\s/.test(line)) {
                                     return (
-                                        <p key={i} className="ml-2 my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: withCode }} />
+                                        <p key={i} className="ml-2 my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: withTooltip }} />
                                     );
                                 }
                                 if (line === '') return <br key={i} />;
                                 return (
-                                    <p key={i} className="my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: withCode }} />
+                                    <p key={i} className="my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: withTooltip }} />
                                 );
                             })}
                             <span

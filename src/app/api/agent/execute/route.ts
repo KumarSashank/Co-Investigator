@@ -185,7 +185,7 @@ export async function POST(req: Request) {
                     }
                 }
                 else if (toolName === 'bigquery') {
-                    const disease = step.inputs.disease || step.inputs.query || session.user_request;
+                    const disease = step.inputs.disease_id || step.inputs.disease || step.inputs.query || session.user_request;
                     logger.info(`${LOG}    🗄️ BigQuery disease: "${disease}"`);
                     const bqData = await fetchDiseaseTargetsFromBigQuery(disease);
                     combinedResults.bigquery = bqData;

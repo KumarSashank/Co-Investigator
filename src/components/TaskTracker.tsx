@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { DeepResearchPlan, PlanStep } from '@/types';
+import Tooltip from '@/components/ui/Tooltip';
 
 const STATUS_CONFIG: Record<string, { icon: string; label: string; dotClass: string }> = {
     DONE: { icon: '✓', label: 'Done', dotClass: 'bg-[var(--accent-green)]' },
@@ -79,7 +80,9 @@ export default function TaskTracker({ session, onApproval, isExecuting }: TaskTr
                 <div className="space-y-1.5">
                     <div className="flex justify-between text-[10px]" style={{ color: 'var(--text-muted)' }}>
                         <span>Progress</span>
-                        <span>{completedCount}/{plan.length} steps</span>
+                        <Tooltip content="The execution progress, showing how many autonomous agent steps have successfully completed out of the total planned for this investigation.">
+                            <span>{completedCount}/{plan.length} steps</span>
+                        </Tooltip>
                     </div>
                     <div className="w-full h-1.5 rounded-full" style={{ background: 'var(--border-default)' }}>
                         <div
@@ -294,17 +297,22 @@ function TaskCard({
                     </div>
                 )}
 
-                {/* Data counts (collapsed) */}
                 {isDone && dataCounts && (
                     <div className="flex gap-3 mt-1.5">
                         {dataCounts.pubmed_results > 0 && (
-                            <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>📄 {dataCounts.pubmed_results} papers</span>
+                            <Tooltip content="Total number of relevant peer-reviewed publications retrieved from the PubMed database.">
+                                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>📄 {dataCounts.pubmed_results} papers</span>
+                            </Tooltip>
                         )}
                         {dataCounts.openalex_authors > 0 && (
-                            <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>🔬 {dataCounts.openalex_authors} authors</span>
+                            <Tooltip content="Total number of unique researchers identified from the OpenAlex database matching the required expertise profile.">
+                                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>🔬 {dataCounts.openalex_authors} authors</span>
+                            </Tooltip>
                         )}
                         {dataCounts.bigquery_targets > 0 && (
-                            <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>🧬 {dataCounts.bigquery_targets} targets</span>
+                            <Tooltip content="Total number of genetic pathways or biomarkers extracted from internal BigQuery clinical datasets.">
+                                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>🧬 {dataCounts.bigquery_targets} targets</span>
+                            </Tooltip>
                         )}
                     </div>
                 )}
@@ -397,9 +405,18 @@ function AnalysisDetails({ analysis }: { analysis: any }) {
                 <div>
                     <p className="text-[9px] font-bold mb-1" style={{ color: 'var(--text-primary)' }}>🎯 Key Targets</p>
                     {analysis.key_targets.map((t: any, i: number) => (
-                        <div key={i} className="flex items-center gap-2 py-0.5">
+                        <div key={i} className="flex items-center justify-between py-0.5">
                             <span className="text-[9px] font-medium" style={{ color: 'var(--text-primary)' }}>{t.name}</span>
-                            <span className="text-[8px]" style={{ color: 'var(--text-muted)' }}>{t.relevance}</span>
+                            <div className="flex items-center gap-2">
+                                <span className="text-[8px] truncate max-w-[150px]" style={{ color: 'var(--text-muted)' }} title={t.relevance}>{t.relevance}</span>
+                                {t.evidence_score !== undefined && (
+                                    <Tooltip content="Evidence score computed by the AI based on the volume of literature and clinical significance found in upstream data.">
+                                        <span className="text-[8px] px-1.5 rounded" style={{ background: 'var(--bg-input)', color: 'var(--accent-cyan)' }}>
+                                            Score: {typeof t.evidence_score === 'number' ? t.evidence_score.toFixed(1) : t.evidence_score}
+                                        </span>
+                                    </Tooltip>
+                                )}
+                            </div>
                         </div>
                     ))}
                 </div>
@@ -411,12 +428,16 @@ function AnalysisDetails({ analysis }: { analysis: any }) {
                     <p className="text-[9px] font-bold mb-1" style={{ color: 'var(--text-primary)' }}>👥 Ranked Researchers</p>
                     {analysis.ranked_researchers.slice(0, 5).map((r: any, i: number) => (
                         <div key={i} className="flex items-center justify-between py-0.5">
-                            <span className="text-[9px]" style={{ color: 'var(--text-primary)' }}>
-                                {i + 1}. {r.name}
-                            </span>
-                            <span className="text-[8px] px-1.5 rounded" style={{ background: 'var(--bg-input)', color: 'var(--accent-cyan)' }}>
-                                Score: {r.relevance_score?.toFixed?.(1) || r.relevance_score || 'N/A'}
-                            </span>
+                            <Tooltip content="The AI's priority ranking for this item based on its calculated evidence score.">
+                                <span className="text-[9px]" style={{ color: 'var(--text-primary)' }}>
+                                    {i + 1}. {r.name}
+                                </span>
+                            </Tooltip>
+                            <Tooltip content="A 0-10 relevance score calculated by the AI specialist. It evaluates recent publication cadence, topic alignment, and specific domain expertise relative to your query.">
+                                <span className="text-[8px] px-1.5 rounded" style={{ background: 'var(--bg-input)', color: 'var(--accent-cyan)' }}>
+                                    Score: {r.relevance_score?.toFixed?.(1) || r.relevance_score || 'N/A'}
+                                </span>
+                            </Tooltip>
                         </div>
                     ))}
                     {analysis.top_3_collaborator_picks && (
