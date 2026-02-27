@@ -4,9 +4,12 @@ import { gcs_write } from '@/lib/gcs';
 import { logger } from '@/lib/logger';
 import { pubmed_search, pubmed_fetch } from '@/lib/pubmed';
 import { openalex_search_authors, openalex_get_author } from '@/lib/openalex';
-import { fetchDiseaseTargetsFromBigQuery } from '@/lib/bigquery';
+import { fetchDiseaseTargetsFromBigQuery, executeDynamicQuery } from '@/lib/bigquery';
 import { vertex_search_retrieve } from '@/lib/vertexSearch';
 import { runStepAgent } from '@/lib/vertex/stepAgent';
+import { generateDynamicSQL } from '@/lib/vertex/sqlAgent';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const LOG = '🤖 [Execute]';
 
@@ -185,11 +188,35 @@ export async function POST(req: Request) {
                     }
                 }
                 else if (toolName === 'bigquery') {
-                    const disease = step.inputs.disease_id || step.inputs.disease || step.inputs.query || session.user_request;
-                    logger.info(`${LOG}    🗄️ BigQuery disease: "${disease}"`);
-                    const bqData = await fetchDiseaseTargetsFromBigQuery(disease);
-                    combinedResults.bigquery = bqData;
-                    logger.info(`${LOG}    → Found ${bqData.associatedTargets?.length || 0} targets`);
+                    // New Dynamic Flow
+                    const datasetName = step.inputs.dataset_name;
+                    const intent = step.inputs.intent || session.user_request;
+
+                    if (!datasetName) {
+                        // Fallback to legacy flow if planner didn't use the new signature
+                        logger.warn(`${LOG}    ⚠️ Planner omitted dataset_name, falling back to legacy BigQuery routine`);
+                        const disease = step.inputs.disease_id || step.inputs.disease || step.inputs.query || session.user_request;
+                        const bqData = await fetchDiseaseTargetsFromBigQuery(disease);
+                        combinedResults.bigquery = bqData;
+                    } else {
+                        logger.info(`${LOG}    🗄️ Routing BigQuery dynamic SQL for dataset: "${datasetName}"`);
+
+                        // Load Schema Dictionary
+                        const schemaPath = path.join(process.cwd(), 'src', 'lib', 'schema_context.json');
+                        const schemaDict = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+                        const specificSchema = schemaDict[datasetName];
+
+                        if (!specificSchema) {
+                            throw new Error(`Invalid dataset_name provided by planner: ${datasetName}`);
+                        }
+
+                        // Generate SQL via Vertex AI
+                        const sqlQuery = await generateDynamicSQL(datasetName, specificSchema, intent, session.user_request);
+
+                        // Execute SQL safely
+                        const bqData = await executeDynamicQuery(sqlQuery, datasetName);
+                        combinedResults.bigquery = bqData;
+                    }
                 }
                 else if (toolName === 'none') {
                     combinedResults.none = { message: 'Synthesis step triggered' };

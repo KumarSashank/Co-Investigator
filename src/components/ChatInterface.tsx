@@ -19,7 +19,7 @@ export default function ChatInterface({ onPlanCreated }: ChatInterfaceProps) {
         {
             id: 'init',
             role: 'assistant',
-            text: "Hello! I'm your **DeepResearch Co-Investigator**.\n\nI can execute complex, multi-step research plans, fetch evidence, and synthesize grounded reports. What would you like to investigate today?",
+            text: "Hello! I'm **Benchie**.\n\nI can execute complex, multi-step research plans, fetch evidence, and synthesize grounded reports. What would you like to investigate today?",
             timestamp: new Date(),
         },
     ]);

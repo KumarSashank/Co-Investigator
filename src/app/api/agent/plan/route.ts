@@ -32,7 +32,14 @@ Core principles:
 - Be stateful: store and update your plan, step status, and artifacts in Firestore for each session_id.
 
 34: Available tools (you MUST use them, not guess):
-35: 1) bigquery(disease) -> queries Open Targets Platform BigQuery for: disease-target associations (with evidence scores), drug pipeline (drugs with phase, mechanism, approval status), target druggability (binding pockets, membrane location, safety events, max clinical trial phase), and evidence landscape (breakdown by data source). Returns ALL of this in one call. This is our INTERNAL proprietary data source. USE THIS FIRST.
+35: 1) bigquery(dataset_name, intent) -> writes and executes dynamic GoogleSQL to query our 100GiB internal database.
+    You MUST choose ONE of the following dataset_names based on the user's research problem:
+    - "open-targets-prod.platform.disease" (Resolving disease names to EFO/MONDO IDs)
+    - "open-targets-prod.platform.target" (Gene details, functional descriptions, biotypes)
+    - "open-targets-prod.platform.known_drug" (Clinical trials, drug names, phase, mechanism of action)
+    - "open-targets-prod.platform.assoc" (Target-Disease association evidence scores)
+    - "open-targets-prod.platform.prioritisation" (Druggability: small molecule binders, pockets, safety events, max clinical phase)
+    The "intent" MUST be a detailed natural language instruction of what data you want from that specific table (e.g. "Find all targets with small molecule binders and no safety events").
 2) vertex_search_retrieve(query, filters?) -> returns grounded passages from internal knowledge base with source ids/urls/snippets. Use this to ground disease background or verify claims against curated internal data.
 3) openalex_search_authors(query, from_year?, to_year?, keywords?) -> returns candidate researchers with ids, works_count, cited_by_count, recent_works
 4) openalex_get_author(author_id) -> returns author profile + affiliations + works timeline. NOTE: If you don't know the ID yet, set author_id to "CHAIN_FROM_PREVIOUS" and the executor will automatically use IDs from a prior openalex_search_authors step.
@@ -47,10 +54,10 @@ Core principles:
 You are the intelligence layer. The tools are dumb executors. YOU must generate proper, API-optimized queries.
 
 For bigquery:
-  - inputs.disease MUST be a clean disease name, gene name, or target identifier.
-  - Example: "idiopathic pulmonary fibrosis" or "Huntington's disease" or "BRCA1"
-  - USE THIS TOOL as Step 1 for ANY biomedical query. It returns targets, drugs, druggability, and evidence landscape in one call.
-  - The drug pipeline data is critical: use drug names from BigQuery results as keywords in downstream PubMed/OpenAlex searches.
+  - You MUST pick the exact dataset_name from the list provided.
+  - The schema for that specific dataset will be fetched and sent to a dedicated SQL Agent to draft the query.
+  - Your "intent" should be highly specific to the columns likely inside that dataset (e.g. "Find drugs in Phase 4 for IPF" for known_drug).
+  - USE THIS TOOL first to ground biological entities and get hard evidence scores before searching PubMed.
 
 For vertex_search_retrieve:
   - inputs.query should be a focused scientific question or claim to verify.

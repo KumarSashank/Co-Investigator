@@ -1,0 +1,46 @@
+graph TD
+    classDef user fill:#6366f1,stroke:#4f46e5,stroke-width:2px,color:#fff,font-weight:bold
+    classDef planner fill:#0ea5e9,stroke:#0284c7,stroke-width:2px,color:#fff,font-weight:bold
+    classDef human fill:#f59e0b,stroke:#d97706,stroke-width:2px,color:#fff,font-weight:bold,stroke-dasharray: 5 5
+    classDef specialist fill:#10b981,stroke:#059669,stroke-width:2px,color:#fff,font-weight:bold
+    classDef synth fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#fff,font-weight:bold
+    classDef db fill:#f1f5f9,stroke:#cbd5e1,stroke-width:2px,color:#334155
+    
+    User[👩‍🔬 Scientist] -->|1. Enters complex research question| Planner
+    
+    subgraph The Planning Phase
+        Planner[🧠 The Planner AI<br/>Breaks question into specific measurable tasks]
+    end
+    
+    Planner -->|2. Drafts Research Protocol| Review[⏸️ Human Checkpoint<br/>Scientist reviews & approves the plan]
+    
+    subgraph The Execution Phase
+        direction TB
+        Review -->|3. Approved! Start tasks| Exec[⚙️ Execution Engine]
+        
+        Exec --> Spec1[🧬 Disease Specialist AI<br/>Analyzes genetic & drug data]
+        Exec --> Spec2[🔬 Network Specialist AI<br/>Finds rising researchers]
+        Exec --> Spec3[📄 Literature Specialist AI<br/>Extracts clinical evidence]
+        
+        Spec1 -.- OTD[(Open Targets database)]
+        Spec2 -.- OA[(OpenAlex database)]
+        Spec3 -.- PM[(PubMed database)]
+        
+        %% Chaining
+        Spec1 -->|Passes target list to| Spec2
+        Spec2 -->|Passes author names to| Spec3
+    end
+    
+    subgraph The Synthesis Phase
+        Spec1 & Spec2 & Spec3 -->|4. Unstructured insights| Synth[📝 The Synthesizer AI<br/>Writes final report]
+        Synth -.- Grounding[🛡️ Google Search Grounding<br/>Fact-checks claims to prevent hallucinations]
+    end
+    
+    Synth -->|5. Final Output| Brief[📄 Research Brief<br/>Fully cited, downloaded as PDF]
+    
+    class User user
+    class Planner planner
+    class Review,Grounding human
+    class Spec1,Spec2,Spec3 specialist
+    class Synth synth
+    class OTD,OA,PM db

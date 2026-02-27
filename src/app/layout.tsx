@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Co-Investigator | AI Research Assistant",
+  title: "Benchie | AI Research Assistant",
   description:
     "BenchSpark AI-powered research assistant for investigating diseases, genetic targets, and scientific literature using Vertex AI with Google Search grounding.",
 };

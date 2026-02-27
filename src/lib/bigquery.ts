@@ -370,3 +370,40 @@ export async function fetchDiseaseTargetsFromBigQuery(diseaseInput: string): Pro
     },
   };
 }
+
+// ==== NEW DYNAMIC SQL EXECUTION ====
+
+export async function executeDynamicQuery(sql: string, datasetName: string): Promise<any> {
+  const startTime = Date.now();
+  logger.info(`${LOG} ⚡ Executing dynamic AI-generated SQL for dataset: ${datasetName} ...`);
+
+  try {
+    // Enforce structural safety - prevent destructive commands
+    const upperSql = sql.toUpperCase();
+    if (upperSql.includes('DROP') || upperSql.includes('DELETE') || upperSql.includes('UPDATE') || upperSql.includes('INSERT') || upperSql.includes('ALTER')) {
+      throw new Error("Security Exception: Only SELECT queries are permitted.");
+    }
+
+    const [rows] = await bigqueryClient.query({
+      query: sql,
+    });
+
+    logger.info(`${LOG} ✅ Dynamic query completed in ${Date.now() - startTime}ms. Returned ${rows.length} rows.`);
+
+    return {
+      datasetName,
+      executedSql: sql,
+      rowCount: rows.length,
+      rows: rows,
+      dataQuality: {
+        source: `BigQuery-${datasetName}`,
+        isLiveData: true,
+        queriedAt: new Date().toISOString()
+      }
+    };
+
+  } catch (e: any) {
+    logger.error(`${LOG} ❌ Dynamic query failed: ${e.message}`);
+    throw e;
+  }
+}

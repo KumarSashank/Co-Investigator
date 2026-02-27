@@ -245,10 +245,10 @@ export default function Home() {
       <header className="flex items-center justify-between px-6 py-3 shrink-0 z-20" style={{ borderBottom: '1px solid var(--border-default)', background: 'var(--bg-secondary)' }}>
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-cyan))' }}>
-            <span className="text-white text-sm font-bold">CI</span>
+            <span className="text-white text-sm font-bold">B</span>
           </div>
           <div>
-            <h1 className="text-sm font-bold gradient-text">Co-Investigator</h1>
+            <h1 className="text-sm font-bold gradient-text">Benchie</h1>
             <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Pre-clinical Research Platform</p>
           </div>
         </div>
