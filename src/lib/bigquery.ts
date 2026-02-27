@@ -43,31 +43,57 @@ async function loadClinGen(): Promise<ClinGenRecord[]> {
   if (clingenCache) return clingenCache;
 
   const csv = await readGCSFile('clingen/gene-disease-validity.csv');
-  const lines = csv.split('\n');
-  const dataLines = lines.filter(
-    (line) => line.trim() && !line.startsWith('"CLINGEN')
-  );
+  const lines = csv.replace(/\r/g, '').split('\n');
 
-  // First line is column header, rest is data
-  const rows = dataLines.slice(1);
+  // ClinGen CSV has metadata rows at the top before the actual column header.
+  // Find the actual header row dynamically (it contains "GENE SYMBOL" or "HGNC ID").
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length && i < 20; i++) {
+    const upper = lines[i].toUpperCase();
+    if (upper.includes('GENE SYMBOL') || upper.includes('HGNC ID') || upper.includes('DISEASE LABEL')) {
+      headerIdx = i;
+      break;
+    }
+  }
 
-  clingenCache = rows
-    .filter((row) => row.trim())
-    .map((row) => {
-      const fields = row.match(/(".*?"|[^,]+)/g) || [];
-      const clean = fields.map((f) => f.replace(/^"|"$/g, '').trim());
-      return {
-        geneSymbol: clean[0] || '',
-        geneId: clean[1] || '',
-        diseaseLabel: clean[2] || '',
-        diseaseId: clean[3] || '',
-        classification: clean[6] || '',
-      };
-    });
+  if (headerIdx === -1) {
+    console.warn('[ClinGen] Could not find header row, defaulting to row 0');
+    headerIdx = 0;
+  }
+
+  const dataRows = lines.slice(headerIdx + 1).filter(r => r.trim());
+
+  clingenCache = dataRows.map((row) => {
+    // A more reliable CSV splitter that handles empty fields properly
+    const fields: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < row.length; i++) {
+      const char = row[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        fields.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    fields.push(current.trim()); // Push the final column
+
+    return {
+      geneSymbol: fields[0] || '',
+      geneId: fields[1] || '',
+      diseaseLabel: fields[2] || '',
+      diseaseId: fields[3] || '',
+      classification: fields[6] || '',
+    };
+  });
 
   console.log(`[Data] Parsed ${clingenCache.length} ClinGen records from cloud`);
   return clingenCache;
 }
+
 
 async function loadCivic(): Promise<CivicRecord[]> {
   if (civicCache) return civicCache;
@@ -221,5 +247,71 @@ export async function fetchDiseaseTargetsFromBigQuery(
       associatedTargets: [],
       pathways: [],
     };
+  }
+}
+
+/**
+ * Sweeps all initialized cloud datasets (ClinGen, CIViC, Reactome) for a generic query
+ * Used by the Unified Export Module to fetch raw rows.
+ */
+export async function searchBigQuery(query: string) {
+  try {
+    const [clingen, civic] = await Promise.all([
+      loadClinGen(),
+      loadCivic(),
+    ]);
+
+    let searchTerm = query.toLowerCase();
+
+    // Map colloquial terms to clinical/genetic dataset terminology.
+    // ClinGen stores GENETIC conditions like cardiomyopathy, not acquired events like myocardial infarction.
+    // CIViC stores cancer variants. These synonyms align colloquial queries with the actual data.
+    const clinicalSynonyms: Record<string, string[]> = {
+      'heart attack': ['cardiomyopathy', 'cardiac', 'arrhythmia', 'coronary', 'heart', 'myocardial', 'cardiovascular'],
+      'stroke': ['cerebrovascular', 'cerebral', 'brain', 'neurological'],
+      'cancer': ['carcinoma', 'melanoma', 'tumor', 'leukemia', 'lymphoma', 'sarcoma', 'adenocarcinoma', 'glioma'],
+      'breast cancer': ['breast', 'brca'],
+      'lung cancer': ['lung', 'pulmonary', 'mesothelioma'],
+      'colon cancer': ['colorectal', 'colon', 'rectal'],
+      'diabetes': ['diabetes', 'insulin', 'glucose'],
+      'flu': ['influenza', 'respiratory'],
+      'covid': ['covid-19', 'sars-cov-2', 'coronavirus'],
+      'alzheimer': ['neurodegeneration', 'dementia', 'cognitive'],
+      'huntington': ['huntington', 'neurodegeneration'],
+      'parkinson': ['parkinson', 'neurodegeneration'],
+      'autism': ['autism', 'developmental'],
+      'epilepsy': ['epilepsy', 'seizure'],
+    };
+
+    // If the query matches a known term, expand the search terms
+    let searchTerms = [searchTerm];
+    for (const [colloquial, synonyms] of Object.entries(clinicalSynonyms)) {
+      if (searchTerm.includes(colloquial)) {
+        searchTerms = searchTerms.concat(synonyms);
+      }
+    }
+
+
+    // Find any ClinGen matches using all possible terms
+    const clingenResults = clingen.filter((row) =>
+      searchTerms.some(term =>
+        (row.diseaseLabel || '').toLowerCase().includes(term) ||
+        (row.geneSymbol || '').toLowerCase().includes(term)
+      )
+    );
+
+    // Find any CIViC matches using all possible terms
+    const civicResults = civic.filter((row) =>
+      searchTerms.some(term =>
+        (row.disease || '').toLowerCase().includes(term) ||
+        (row.gene || '').toLowerCase().includes(term)
+      )
+    );
+
+    return { clingenResults, civicResults };
+
+  } catch (error) {
+    console.error('[BigQuery Sweep] Error:', error);
+    return { clingenResults: [], civicResults: [] };
   }
 }

@@ -13,7 +13,13 @@ export interface ProteinInteraction {
  * Searches the human STRING interaction dataset in GCS.
  */
 export async function fetchProteinInteractions(query: string): Promise<ProteinInteraction[]> {
-    const searchTerm = query.toUpperCase();
+    const searchTerm = query.trim().toUpperCase();
+
+    // STRING only works with short protein gene symbols like "TP53", "BRCA1".
+    // Reject long queries or phrases like "Heart attack" before loading the large GCS files.
+    if (searchTerm.length > 10 || searchTerm.includes(' ')) {
+        return [];
+    }
 
     // Load data from cloud (cached in memory)
     const [interactions, info] = await Promise.all([

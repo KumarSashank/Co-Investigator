@@ -1,17 +1,37 @@
 import { PubMedArticleResponse } from './types';
 
 export async function fetchFromPubMed(query: string): Promise<PubMedArticleResponse[]> {
-    // PubMed E-utilities search
-    // e.g. https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=IPF&retmode=json&retmax=5
-
-    const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmode=json&retmax=5`;
+    // 1. Try exact title match first if it's a phrase
+    // Remove enclosing or internal quotes so we don't break PubMed's query parser with nested punctuation
+    const cleanForTitle = query.replace(/"/g, '').trim();
+    const exactTitleQuery = cleanForTitle.split(' ').length > 3 ? `${cleanForTitle}[Title]` : cleanForTitle;
+    const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(exactTitleQuery)}&retmode=json&retmax=50`;
 
     try {
         const searchRes = await fetch(searchUrl);
         if (!searchRes.ok) throw new Error("PubMed search failed");
         const searchData = await searchRes.json();
 
-        const idList = searchData.esearchresult?.idlist || [];
+        let idList = searchData.esearchresult?.idlist || [];
+
+        // 2. If exact title match fails, fall back to clean phrase match
+        if (idList.length === 0) {
+            const cleanQuery = query.replace(/[^\w\s-]/gi, ' ').replace(/\s+/g, ' ').trim();
+            const cleanPhrase = cleanQuery.split(' ').length > 3 ? `"${cleanQuery}"` : cleanQuery;
+            const cleanUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(cleanPhrase)}&retmode=json&retmax=50`;
+            const cleanRes = await fetch(cleanUrl);
+            const cleanData = await cleanRes.json();
+            idList = cleanData.esearchresult?.idlist || [];
+        }
+
+        // 3. If that still fails, fall back to the original loose OR/AND query
+        if (idList.length === 0) {
+            const looseUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmode=json&retmax=50`;
+            const looseRes = await fetch(looseUrl);
+            const looseData = await looseRes.json();
+            idList = looseData.esearchresult?.idlist || [];
+        }
+
         if (idList.length === 0) {
             return [];
         }

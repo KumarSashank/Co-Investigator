@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { updateSubTask, getSession } from '@/lib/firestore/stateEngine';
 import { fetchDiseaseTargetsFromBigQuery } from '@/lib/bigquery';
-import { fetchAuthorMetrics } from '@/lib/openalex';
-import { fetchPubMedArticles } from '@/lib/pubmed';
+// Removed deprecated fetchAuthorMetrics and fetchPubMedArticles imports
 import { queryPubTatorByTitle, fetchPubTatorAnnotations } from '@/lib/pubtator';
 import { fetchProteinInteractions } from '@/lib/string';
 import { DATASETS } from '@/lib/cloudData';
@@ -48,13 +47,13 @@ export async function POST(req: Request) {
                     break;
 
                 case 'openalex':
-                    const author = extract(/author (.*)/i) || extract(/for (.*)/i) || 'john_doe';
-                    resultData = await fetchAuthorMetrics(author);
+                    // OpenAlex metric tracking replaced by centralized export module
+                    resultData = { message: "OpenAlex tracking superseded by Export Module." };
                     break;
 
                 case 'pubmed':
-                    const pQuery = extract(/query (.*)/i) || extract(/for (.*)/i) || extract(/about (.*)/i) || 'biomedicine';
-                    resultData = await fetchPubMedArticles(pQuery);
+                    // Legacy PubMed fetching replaced by centralized fetchFromPubMed / Export module
+                    resultData = { message: "Agent PubMed Tool superseded by Export Module." };
                     break;
 
                 case 'pubtator':
