@@ -155,7 +155,7 @@ export async function POST(req: Request) {
             contents: [{
                 role: 'user',
                 parts: [
-                    { text: `Generate the final research report based on this execution data:\n\n${contextData}` }
+                    { text: `Generate the final research report based on this execution data. Start the report with a "## Original Request" section that verbatim quotes the originalQuery.\n\n${contextData}` }
                 ]
             }],
             systemInstruction: { role: 'system' as const, parts: [{ text: REPORT_SYSTEM_INSTRUCTION }] }
