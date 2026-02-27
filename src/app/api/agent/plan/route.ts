@@ -5,7 +5,7 @@ import { DeepResearchPlan } from '@/types';
 
 // Initialize Vertex AI
 const vertexAI = new VertexAI({
-    project: process.env.GOOGLE_CLOUD_PROJECT || 'benchspark-hackathon-default',
+    project: process.env.GOOGLE_CLOUD_PROJECT || 'lazy-coders-1771991986',
     location: 'us-central1'
 });
 

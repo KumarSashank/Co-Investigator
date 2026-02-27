@@ -80,6 +80,7 @@ export type ActivityLevel = 'ACTIVE' | 'MODERATE' | 'LOW';
 export interface OpenAlexAuthorResponse {
   authorId: string;
   displayName: string;
+  profileUrl: string;
   currentInstitution: string;
   metrics: {
     worksCount: number;
@@ -93,6 +94,8 @@ export interface OpenAlexAuthorResponse {
     title: string;
     year: number;
     citationCount: number;
+    doi: string | null;
+    url: string;
   }>;
 }
 

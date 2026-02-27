@@ -1,18 +1,18 @@
 import { DeepResearchPlan, PlanStep } from '@/types';
+import { Firestore } from '@google-cloud/firestore';
 
 /**
- * In-Memory State Engine (Mocking Firestore)
+ * Real Firestore State Engine
  * 
- * Uses globalThis to persist the Map across Next.js hot reloads.
- * Without globalThis, Turbopack re-evaluates this module on every code change,
- * creating a new empty Map and losing all sessions.
+ * Uses @google-cloud/firestore with Google Application Default Credentials.
+ * Sessions are stored in the "co_investigator_sessions" collection.
  */
 
-const globalForSessions = globalThis as unknown as { __sessions: Map<string, DeepResearchPlan> };
-if (!globalForSessions.__sessions) {
-    globalForSessions.__sessions = new Map();
-}
-const sessions = globalForSessions.__sessions;
+const firestore = new Firestore({
+    projectId: process.env.GOOGLE_CLOUD_PROJECT || 'lazy-coders-1771991986',
+});
+
+const COLLECTION_NAME = 'co_investigator_sessions';
 
 /**
  * Creates a new research session with the Vertex AI generated plan.
@@ -32,8 +32,10 @@ export async function createSession(originalQuery: string, plan: PlanStep[]): Pr
         updatedAt: new Date().toISOString()
     };
 
-    sessions.set(session_id, session);
-    console.log(`[StateEngine] ✅ Created session: ${session_id} (total sessions in memory: ${sessions.size})`);
+    const docRef = firestore.collection(COLLECTION_NAME).doc(session_id);
+    await docRef.set(session);
+
+    console.log(`[StateEngine] ✅ Created session in Firestore: ${session_id}`);
     return session_id;
 }
 
@@ -41,41 +43,56 @@ export async function createSession(originalQuery: string, plan: PlanStep[]): Pr
  * Upserts a session, matching the requested firestore_upsert_session(session_id, patch_object).
  */
 export async function firestore_upsert_session(session_id: string, patch_object: Partial<DeepResearchPlan>) {
-    const session = sessions.get(session_id);
-    if (!session) {
-        console.error(`[StateEngine] ❌ Upsert failed: session ${session_id} not found! Keys: [${Array.from(sessions.keys()).join(', ')}]`);
+    const docRef = firestore.collection(COLLECTION_NAME).doc(session_id);
+    const docSnap = await docRef.get();
+
+    if (!docSnap.exists) {
+        console.error(`[StateEngine] ❌ Upsert failed: session ${session_id} not found in Firestore!`);
         throw new Error(`Session ${session_id} does not exist`);
     }
 
-    const updated = {
-        ...session,
+    const updatedData = {
         ...patch_object,
         updatedAt: new Date().toISOString()
     };
-    sessions.set(session_id, updated);
-    console.log(`[StateEngine] Updated session: ${session_id}`);
+
+    await docRef.update(updatedData);
+    console.log(`[StateEngine] Updated session in Firestore: ${session_id}`);
 }
 
 /**
  * Retrieves the current session. Matches firestore_get_session(session_id).
  */
 export async function firestore_get_session(session_id: string): Promise<DeepResearchPlan | null> {
-    const session = sessions.get(session_id) || null;
-    if (!session) {
-        console.error(`[StateEngine] ❌ Session NOT FOUND: "${session_id}". Known sessions: [${Array.from(sessions.keys()).join(', ')}]`);
+    try {
+        const docRef = firestore.collection(COLLECTION_NAME).doc(session_id);
+        const docSnap = await docRef.get();
+
+        if (!docSnap.exists) {
+            console.error(`[StateEngine] ❌ Session NOT FOUND in Firestore: "${session_id}"`);
+            return null;
+        }
+
+        return docSnap.data() as DeepResearchPlan;
+    } catch (error) {
+        console.error(`[StateEngine] ❌ Error fetching session "${session_id}" from Firestore:`, error);
+        return null;
     }
-    return session;
 }
 
 /**
  * Updates a specific subtask within a session.
  */
 export async function updateSubTask(session_id: string, stepId: string, taskUpdates: Partial<PlanStep>) {
-    const session = sessions.get(session_id);
-    if (!session) {
-        console.error(`[StateEngine] ❌ updateSubTask failed: session ${session_id} not found!`);
+    const docRef = firestore.collection(COLLECTION_NAME).doc(session_id);
+    const docSnap = await docRef.get();
+
+    if (!docSnap.exists) {
+        console.error(`[StateEngine] ❌ updateSubTask failed: session ${session_id} not found in Firestore!`);
         throw new Error(`Session ${session_id} does not exist`);
     }
+
+    const session = docSnap.data() as DeepResearchPlan;
 
     const updatedPlan = session.plan.map((step: PlanStep) => {
         if (step.id === stepId) {
@@ -84,12 +101,10 @@ export async function updateSubTask(session_id: string, stepId: string, taskUpda
         return step;
     });
 
-    const updatedSession: DeepResearchPlan = {
-        ...session,
+    await docRef.update({
         plan: updatedPlan,
         updatedAt: new Date().toISOString()
-    };
+    });
 
-    sessions.set(session_id, updatedSession);
-    console.log(`[StateEngine] Updated step ${stepId} → status: ${taskUpdates.status || 'unchanged'}`);
+    console.log(`[StateEngine] Updated step ${stepId} in Firestore → status: ${taskUpdates.status || 'unchanged'}`);
 }

@@ -101,7 +101,9 @@ export async function openalex_search_authors(query: string, from_year?: number,
                 entry.recentWorks.push({
                     title: work.title,
                     year: pubYear,
-                    citationCount: work.cited_by_count || 0
+                    citationCount: work.cited_by_count || 0,
+                    doi: work.doi || null,
+                    url: work.id || ''
                 });
             }
         }
@@ -119,9 +121,13 @@ export async function openalex_search_authors(query: string, from_year?: number,
 
             const activityLevel = determineActivityLevel(worksLast3Years, lastWorkYear, currentYear);
 
+            // Build profile URL from author ID
+            const profileUrl = id.startsWith('https://') ? id : `https://openalex.org/${id}`;
+
             candidates.push({
                 authorId: id,
                 displayName: entry.display_name,
+                profileUrl,
                 currentInstitution: entry.institution,
                 metrics: {
                     worksCount: entry.localWorksCount,
@@ -203,7 +209,9 @@ export async function openalex_get_author(authorId: string): Promise<OpenAlexAut
             recentPublications.push({
                 title: w.title,
                 year,
-                citationCount: w.cited_by_count || 0
+                citationCount: w.cited_by_count || 0,
+                doi: w.doi || null,
+                url: w.id || ''
             });
         }
 
@@ -214,9 +222,13 @@ export async function openalex_get_author(authorId: string): Promise<OpenAlexAut
 
         const activityLevel = determineActivityLevel(worksLast3Years, lastWorkYear, currentYear);
 
+        // Build profile URL
+        const profileUrl = author.id?.startsWith('https://') ? author.id : `https://openalex.org/${cleanId}`;
+
         return {
             authorId: author.id,
             displayName: author.display_name,
+            profileUrl,
             currentInstitution: author.last_known_institution?.display_name || 'Unknown',
             metrics: {
                 worksCount: author.works_count || 0,

@@ -81,7 +81,7 @@ export async function POST(req: Request) {
 
             try {
                 if (toolName === 'pubmed_search') {
-                    const query = step.inputs.query || session.user_request;
+                    const query = step.inputs.query || step.inputs.pubmed_query || session.user_request;
                     const fromYear = step.inputs.from_year || (new Date().getFullYear() - 3);
                     logger.info(`${LOG}    📄 PubMed query: "${query}" | from_year: ${fromYear} | to_year: ${step.inputs.to_year || 'none'}`);
                     const res = await pubmed_search(query, fromYear, step.inputs.to_year);
