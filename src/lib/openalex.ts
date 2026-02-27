@@ -48,8 +48,9 @@ export async function openalex_search_authors(query: string, from_year?: number,
     logger.info({ query, from_year, to_year, keywords }, `${LOG_PREFIX} openalex_search_authors called`);
 
     // Use keywords if provided by the planner, otherwise use query directly
-    const searchTerms = keywords && keywords.length > 0
-        ? keywords.join(' ')
+    const kwArray = Array.isArray(keywords) ? keywords : (typeof keywords === 'string' ? [keywords] : []);
+    const searchTerms = kwArray.length > 0
+        ? kwArray.join(' ')
         : query;
 
     // Build the URL with proper filters

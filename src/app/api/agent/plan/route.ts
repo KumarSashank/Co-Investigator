@@ -227,28 +227,39 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Invalid Plan DSL generated' }, { status: 500 });
         }
 
+        // Sanitize inputs
+        parsedPlan.plan.forEach((step: any) => {
+            if (step.inputs?.keywords && !Array.isArray(step.inputs.keywords)) {
+                if (typeof step.inputs.keywords === 'string') {
+                    step.inputs.keywords = step.inputs.keywords.split(',').map((k: string) => k.trim()).filter(Boolean);
+                } else {
+                    step.inputs.keywords = [String(step.inputs.keywords)];
+                }
+            }
+        });
+
         // Log per-step breakdown with queries
         console.log(`🧠 [Plan] 📋 PLAN BREAKDOWN (${parsedPlan.plan.length} steps):`);
         for (const step of parsedPlan.plan) {
             console.log(`   ┌─ Step ${step.id}: ${step.name}`);
             console.log(`   │  Intent: ${step.intent}`);
             console.log(`   │  Tools: [${step.tools.join(', ')}]`);
-            if (step.inputs.query) {
+            if (step.inputs?.query) {
                 console.log(`   │  🔍 Query: "${step.inputs.query}"`);
             }
-            if (step.inputs.keywords && step.inputs.keywords.length > 0) {
+            if (step.inputs?.keywords && step.inputs.keywords.length > 0) {
                 console.log(`   │  🏷️  Keywords: [${step.inputs.keywords.join(', ')}]`);
             }
-            if (step.inputs.from_year || step.inputs.to_year) {
-                console.log(`   │  📅 Year range: ${step.inputs.from_year || '?'} → ${step.inputs.to_year || '?'}`);
+            if (step.inputs?.from_year || step.inputs?.to_year) {
+                console.log(`   │  📅 Year range: ${step.inputs?.from_year || '?'} → ${step.inputs?.to_year || '?'}`);
             }
-            if (step.inputs.author_id) {
+            if (step.inputs?.author_id) {
                 console.log(`   │  👤 Author ID: ${step.inputs.author_id}`);
             }
-            if (step.inputs.pmids) {
+            if (step.inputs?.pmids) {
                 console.log(`   │  📄 PMIDs: ${JSON.stringify(step.inputs.pmids)}`);
             }
-            if (step.inputs.question) {
+            if (step.inputs?.question) {
                 console.log(`   │  ❓ HITL Question: "${step.inputs.question}"`);
             }
             console.log(`   └─ Expected: [${(step.expected_output || []).join(', ')}]`);
