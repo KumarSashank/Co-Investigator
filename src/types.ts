@@ -18,10 +18,15 @@ export type AgentToolName =
 
 export type StepIntent =
   | 'retrieve'
+  | 'identify'
   | 'rank'
   | 'verify'
   | 'extract'
   | 'synthesize'
+  | 'hypothesize'
+  | 'design_study'
+  | 'compare'
+  | 'analyze'
   | 'other';
 
 export type StepStatus = 'PENDING' | 'RUNNING' | 'DONE' | 'BLOCKED' | 'FAILED';

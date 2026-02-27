@@ -263,6 +263,12 @@ export async function POST(req: Request) {
         }
         if (combinedResults.bigquery) {
             chainableData.bigquery = combinedResults.bigquery;
+            // Also extract drug names for downstream tool chaining
+            if (combinedResults.bigquery.drugPipeline && Array.isArray(combinedResults.bigquery.drugPipeline)) {
+                chainableData.bigquery_drug_names = combinedResults.bigquery.drugPipeline
+                    .map((d: any) => d.drugName)
+                    .filter(Boolean);
+            }
         }
         if (combinedResults.vertex_search_retrieve) {
             chainableData.vertex_search_retrieve = combinedResults.vertex_search_retrieve;
