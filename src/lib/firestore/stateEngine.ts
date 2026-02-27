@@ -9,7 +9,7 @@ import { Firestore } from '@google-cloud/firestore';
  */
 
 const firestore = new Firestore({
-    projectId: process.env.GOOGLE_CLOUD_PROJECT || 'lazy-coders-1771991986',
+    projectId: process.env.GOOGLE_CLOUD_PROJECT || 'benchspark-data-1771447466',
 });
 
 const COLLECTION_NAME = 'co_investigator_sessions';

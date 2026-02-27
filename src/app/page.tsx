@@ -280,8 +280,6 @@ export default function Home() {
               <div className="h-full overflow-y-auto p-6">
                 <ResearchBrief
                   markdown={displaySession?.final_output || ''}
-                  // Optional: Compute grounded score from Vertex AI response
-                  groundingScore={0.99}
                 />
               </div>
             )}

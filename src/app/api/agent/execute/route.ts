@@ -9,14 +9,12 @@ import { runStepAgent } from '@/lib/vertex/stepAgent';
 const LOG = '🤖 [Execute]';
 
 /**
- * Looks through previous completed steps in the session to find data.
- * This is the cross-step chaining mechanism that lets downstream tools
- * use outputs from upstream tools.
+ * Looks through previous completed steps to find data for cross-step chaining.
  */
 function findPreviousStepData(session: any, currentStepId: string): Record<string, any> {
     const allResults: Record<string, any> = {};
     for (const step of session.plan) {
-        if (step.id === currentStepId) break; // Only look at earlier steps
+        if (step.id === currentStepId) break;
         if (step.status === 'DONE' && step.result_data) {
             allResults[step.id] = step.result_data;
         }
@@ -26,8 +24,6 @@ function findPreviousStepData(session: any, currentStepId: string): Record<strin
 
 /**
  * Collects AI analyses from previous completed steps.
- * This is how agents communicate: each step's AI analysis
- * becomes input context for the next step's specialist agent.
  */
 function findPreviousAgentAnalyses(session: any, currentStepId: string): Record<string, any> {
     const analyses: Record<string, any> = {};
@@ -48,7 +44,7 @@ export async function POST(req: Request) {
     logger.info(`\n${'═'.repeat(60)}`);
 
     try {
-        const { sessionId, taskId, toolParams } = await req.json();
+        const { sessionId, taskId } = await req.json();
         logger.info({ sessionId, taskId }, `${LOG} Execution requested`);
 
         if (!sessionId || !taskId) {
@@ -61,16 +57,16 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Session not found' }, { status: 404 });
         }
 
-        const step = session.plan.find(t => t.id === taskId);
+        const step = session.plan.find((t: any) => t.id === taskId);
         if (!step) {
             return NextResponse.json({ error: 'Task not found in session plan' }, { status: 404 });
         }
 
         logger.info(`${LOG} Step: "${step.name}" | Tools: [${step.tools.join(', ')}] | Intent: ${step.intent}`);
 
-        // Handle explicit hitl_pause tool requested in the plan
+        // Handle explicit hitl_pause tool
         if (step.tools.includes('hitl_pause')) {
-            logger.info(`${LOG} ⏸️ HITL Pause requested by plan`);
+            logger.info(`${LOG} ⏸️ HITL Pause requested`);
             await updateSubTask(sessionId, taskId, { status: 'RUNNING' });
             await firestore_upsert_session(sessionId, {
                 awaiting_confirmation: true,
@@ -93,8 +89,9 @@ export async function POST(req: Request) {
         const previousData = findPreviousStepData(session, taskId);
         logger.info(`${LOG} Previous step data available from: [${Object.keys(previousData).join(', ')}]`);
 
-        // 4. Execute the appropriate tools and collect results
+        // 4. Execute the appropriate tools
         const combinedResults: Record<string, any> = {};
+        const baseUrl = `http://localhost:${process.env.PORT || '3000'}`;
 
         for (const toolName of step.tools) {
             logger.info(`${LOG} 🔧 Running tool: ${toolName}`);
@@ -104,31 +101,28 @@ export async function POST(req: Request) {
                 if (toolName === 'pubmed_search') {
                     const query = step.inputs.query || step.inputs.pubmed_query || session.user_request;
                     const fromYear = step.inputs.from_year || (new Date().getFullYear() - 3);
-                    logger.info(`${LOG}    📄 PubMed query: "${query}" | from_year: ${fromYear} | to_year: ${step.inputs.to_year || 'none'}`);
+                    logger.info(`${LOG}    📄 PubMed query: "${query}" | from_year: ${fromYear}`);
                     const res = await pubmed_search(query, fromYear, step.inputs.to_year);
                     combinedResults.pubmed_search = res;
-                    logger.info(`${LOG}    → Found ${res.length} PMIDs: [${res.slice(0, 5).join(', ')}${res.length > 5 ? '...' : ''}]`);
+                    logger.info(`${LOG}    → Found ${res.length} PMIDs`);
                 }
                 else if (toolName === 'pubmed_fetch') {
-                    // Chain: get PMIDs from a prior pubmed_search step if not in inputs
                     let pmids = step.inputs.pmids || [];
-                    // Handle CHAIN_FROM_PREVIOUS sentinel from the AI planner
                     if (pmids === 'CHAIN_FROM_PREVIOUS' || (Array.isArray(pmids) && pmids.length === 0)) {
                         pmids = [];
-                        // Look for PMIDs from any previous step
                         for (const data of Object.values(previousData)) {
                             if (data.pubmed_search && Array.isArray(data.pubmed_search) && data.pubmed_search.length > 0) {
                                 pmids = data.pubmed_search;
-                                logger.info(`${LOG}    → Chained ${pmids.length} PMIDs from previous pubmed_search step`);
+                                logger.info(`${LOG}    → Chained ${pmids.length} PMIDs from previous step`);
                                 break;
                             }
                         }
                     }
                     if (pmids.length === 0) {
-                        logger.warn(`${LOG}    ⚠️ No PMIDs available for pubmed_fetch — skipping`);
+                        logger.warn(`${LOG}    ⚠️ No PMIDs available — skipping`);
                         combinedResults.pubmed_fetch = { warning: 'No PMIDs to fetch' };
                     } else {
-                        const res = await pubmed_fetch(pmids);
+                        const res = await pubmed_fetch(pmids.slice(0, 10));
                         combinedResults.pubmed_fetch = res;
                         logger.info(`${LOG}    → Fetched ${res.length} detailed articles`);
                     }
@@ -140,29 +134,22 @@ export async function POST(req: Request) {
                     logger.info(`${LOG}    → Found ${res.length} candidate authors`);
                 }
                 else if (toolName === 'openalex_get_author') {
-                    // Chain: pull author IDs from previous openalex_search_authors
                     let authorId = step.inputs.author_id;
                     const authorIds: string[] = [];
 
                     if (!authorId || authorId === 'FROM_PREVIOUS_STEP' || authorId === 'CHAIN_FROM_PREVIOUS' || authorId === '') {
-                        // Find author IDs from previous search step
                         for (const data of Object.values(previousData)) {
                             if (data.openalex_search_authors && Array.isArray(data.openalex_search_authors)) {
                                 for (const candidate of data.openalex_search_authors.slice(0, 5)) {
-                                    if (candidate.authorId) {
-                                        authorIds.push(candidate.authorId);
-                                    }
+                                    if (candidate.authorId) authorIds.push(candidate.authorId);
                                 }
                                 break;
                             }
                         }
 
                         if (authorIds.length === 0) {
-                            logger.warn(`${LOG}    ⚠️ No author IDs available from previous steps — skipping`);
-                            combinedResults.openalex_get_author = { warning: 'No author IDs found from previous search' };
+                            combinedResults.openalex_get_author = { warning: 'No author IDs found' };
                         } else {
-                            logger.info(`${LOG}    → Chained ${authorIds.length} author IDs from previous search step`);
-                            // Fetch details for top candidates
                             const detailedAuthors = [];
                             for (const aid of authorIds) {
                                 try {
@@ -176,13 +163,11 @@ export async function POST(req: Request) {
                             logger.info(`${LOG}    → Retrieved ${detailedAuthors.length} detailed author profiles`);
                         }
                     } else {
-                        // Direct author ID provided
                         const detail = await openalex_get_author(authorId);
                         combinedResults.openalex_get_author = detail;
                     }
                 }
                 else if (toolName === 'bigquery') {
-                    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
                     const disease = step.inputs.disease || step.inputs.query || session.user_request;
                     const bqRes = await fetch(`${baseUrl}/api/tools/bigquery?disease=${encodeURIComponent(disease)}`);
                     combinedResults.bigquery = await bqRes.json();
@@ -192,7 +177,7 @@ export async function POST(req: Request) {
                 }
                 else if (toolName === 'vertex_search_retrieve') {
                     combinedResults.vertex_search_retrieve = {
-                        message: "Vertex Search grounding will be applied at final report generation time."
+                        message: "Vertex Search grounding applied at report generation."
                     };
                 }
                 else {
@@ -205,40 +190,44 @@ export async function POST(req: Request) {
             }
         }
 
-        // 5. Run the Step-Level Specialist Agent (the multi-agent magic)
-        //    This is a SECOND Gemini call that analyzes the raw tool output
-        //    and produces structured insights for downstream agents.
-        logger.info(`${LOG} 🧬 Invoking specialist agent for intent: ${step.intent}`);
-        const previousAnalyses = findPreviousAgentAnalyses(session, taskId);
-        logger.info(`${LOG} 📡 Passing ${Object.keys(previousAnalyses).length} previous agent analyses as context`);
+        // 5. Run the Step-Level Specialist Agent (graceful fallback if unavailable)
+        let aiAnalysis: any = null;
+        try {
+            logger.info(`${LOG} 🧬 Invoking specialist agent for intent: ${step.intent}`);
+            const previousAnalyses = findPreviousAgentAnalyses(session, taskId);
+            aiAnalysis = await runStepAgent(step.intent, combinedResults, previousAnalyses, session.user_request);
+            logger.info(`${LOG} 🧬 Agent completed. Confidence: ${aiAnalysis.confidence || 'N/A'}`);
+        } catch (agentError: any) {
+            logger.warn(`${LOG} ⚠️ Specialist agent unavailable: ${agentError.message}. Storing raw results directly.`);
+            aiAnalysis = {
+                agent_name: `fallback_${step.intent}`,
+                confidence: 'N/A',
+                summary: `Tool execution completed. Raw data collected from: ${step.tools.join(', ')}`,
+                raw_fallback: true
+            };
+        }
 
-        const aiAnalysis = await runStepAgent(
-            step.intent,
-            combinedResults,
-            previousAnalyses,
-            session.user_request
-        );
-
-        logger.info(`${LOG} 🧬 Agent ${aiAnalysis.agent_name || step.intent} completed. Confidence: ${aiAnalysis.confidence || 'N/A'}`);
-
-        // 6. SAVE RAW DATA to Firestore subcollection (full tool output)
-        //    This is the "deep storage" — only fetched when user clicks "View Details"
-        await saveStepRawData(sessionId, taskId, combinedResults);
+        // 6. Save raw data to Firestore subcollection
+        try {
+            await saveStepRawData(sessionId, taskId, combinedResults);
+        } catch (e: any) {
+            logger.warn(`${LOG} ⚠️ Raw data save failed (non-fatal): ${e.message}`);
+        }
 
         // 7. Write to GCS as backup
-        const gcsPath = `runs/${sessionId}/${taskId}.json`;
         let artifactUri = '';
         try {
+            const gcsPath = `runs/${sessionId}/${taskId}.json`;
             artifactUri = await gcs_write(gcsPath, combinedResults);
             const sessionArtifacts = session.artifacts || {};
             sessionArtifacts[taskId] = artifactUri;
             await firestore_upsert_session(sessionId, { artifacts: sessionArtifacts });
         } catch (gcsError: any) {
             logger.warn(`${LOG} ⚠️ GCS write failed (non-fatal): ${gcsError.message}`);
-            artifactUri = `local://no-gcs`;
+            artifactUri = 'local://no-gcs';
         }
 
-        // 8. Mark task DONE — store ONLY the AI summary on PlanStep, not the raw dump
+        // 8. Mark task DONE — store both AI summary AND raw tool data
         const stepSummary = {
             ai_analysis: aiAnalysis,
             tools_used: step.tools,
@@ -248,20 +237,22 @@ export async function POST(req: Request) {
                 bigquery_targets: combinedResults.bigquery?.associatedTargets?.length || 0,
             },
             artifact_uri: artifactUri,
+            // CRITICAL: Also store raw tool data so the report can synthesize it
+            raw_data: combinedResults,
         };
 
         await updateSubTask(sessionId, taskId, {
             status: 'DONE',
-            result_data: stepSummary  // Only concise summary, NOT raw data
+            result_data: stepSummary
         });
 
-        logger.info(`${LOG} ✅ Step ${taskId} DONE. Summary stored, raw data in subcollection.`);
+        logger.info(`${LOG} ✅ Step ${taskId} DONE. Summary + raw data stored.`);
 
         return NextResponse.json({
             status: 'success',
             taskId,
             artifactUri,
-            result: stepSummary  // Only summary sent to frontend
+            result: stepSummary
         });
 
     } catch (error: any) {
