@@ -4,6 +4,8 @@ import { gcs_write } from '@/lib/gcs';
 import { logger } from '@/lib/logger';
 import { pubmed_search, pubmed_fetch } from '@/lib/pubmed';
 import { openalex_search_authors, openalex_get_author } from '@/lib/openalex';
+import { fetchDiseaseTargetsFromBigQuery } from '@/lib/bigquery';
+import { vertex_search_retrieve } from '@/lib/vertexSearch';
 import { runStepAgent } from '@/lib/vertex/stepAgent';
 
 const LOG = '🤖 [Execute]';
@@ -18,7 +20,8 @@ function findPreviousStepData(session: any, currentStepId: string): Record<strin
     for (const step of session.plan) {
         if (step.id === currentStepId) break; // Only look at earlier steps
         if (step.status === 'DONE' && step.result_data) {
-            allResults[step.id] = step.result_data;
+            // Prefer chainable_data (new format) over raw result_data (legacy)
+            allResults[step.id] = step.result_data.chainable_data || step.result_data;
         }
     }
     return allResults;
@@ -134,7 +137,7 @@ export async function POST(req: Request) {
                     }
                 }
                 else if (toolName === 'openalex_search_authors') {
-                    const query = step.inputs.query || session.user_request;
+                    const query = step.inputs.openalex_query || step.inputs.query || session.user_request;
                     const res = await openalex_search_authors(query, step.inputs.from_year, step.inputs.to_year, step.inputs.keywords);
                     combinedResults.openalex_search_authors = res;
                     logger.info(`${LOG}    → Found ${res.length} candidate authors`);
@@ -182,18 +185,21 @@ export async function POST(req: Request) {
                     }
                 }
                 else if (toolName === 'bigquery') {
-                    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
                     const disease = step.inputs.disease || step.inputs.query || session.user_request;
-                    const bqRes = await fetch(`${baseUrl}/api/tools/bigquery?disease=${encodeURIComponent(disease)}`);
-                    combinedResults.bigquery = await bqRes.json();
+                    logger.info(`${LOG}    🗄️ BigQuery disease: "${disease}"`);
+                    const bqData = await fetchDiseaseTargetsFromBigQuery(disease);
+                    combinedResults.bigquery = bqData;
+                    logger.info(`${LOG}    → Found ${bqData.associatedTargets?.length || 0} targets`);
                 }
                 else if (toolName === 'none') {
                     combinedResults.none = { message: 'Synthesis step triggered' };
                 }
                 else if (toolName === 'vertex_search_retrieve') {
-                    combinedResults.vertex_search_retrieve = {
-                        message: "Vertex Search grounding will be applied at final report generation time."
-                    };
+                    const searchQuery = step.inputs.query || session.user_request;
+                    logger.info(`${LOG}    🔍 Vertex Search query: "${searchQuery}"`);
+                    const vsResult = await vertex_search_retrieve(searchQuery, step.inputs.filters);
+                    combinedResults.vertex_search_retrieve = vsResult;
+                    logger.info(`${LOG}    → Found ${vsResult.totalResults} results, summary: ${vsResult.summary ? 'yes' : 'no'}`);
                 }
                 else {
                     logger.warn(`${LOG}    ⚠️ Unknown tool: ${toolName} — skipping`);
@@ -238,9 +244,34 @@ export async function POST(req: Request) {
             artifactUri = `local://no-gcs`;
         }
 
-        // 8. Mark task DONE — store ONLY the AI summary on PlanStep, not the raw dump
+        // 8. Extract chainable data — ONLY the data downstream tools need to chain
+        //    This keeps the session doc small while preserving cross-step data flow.
+        const chainableData: Record<string, any> = {};
+        if (combinedResults.pubmed_search && Array.isArray(combinedResults.pubmed_search)) {
+            chainableData.pubmed_search = combinedResults.pubmed_search; // PMIDs array
+        }
+        if (combinedResults.pubmed_fetch && Array.isArray(combinedResults.pubmed_fetch)) {
+            chainableData.pubmed_fetch = combinedResults.pubmed_fetch; // Full article records
+        }
+        if (combinedResults.openalex_search_authors && Array.isArray(combinedResults.openalex_search_authors)) {
+            chainableData.openalex_search_authors = combinedResults.openalex_search_authors;
+        }
+        if (combinedResults.openalex_get_author) {
+            chainableData.openalex_get_author = Array.isArray(combinedResults.openalex_get_author)
+                ? combinedResults.openalex_get_author
+                : [combinedResults.openalex_get_author];
+        }
+        if (combinedResults.bigquery) {
+            chainableData.bigquery = combinedResults.bigquery;
+        }
+        if (combinedResults.vertex_search_retrieve) {
+            chainableData.vertex_search_retrieve = combinedResults.vertex_search_retrieve;
+        }
+
+        // 9. Mark task DONE — store AI summary + chainable data (not full raw dump)
         const stepSummary = {
             ai_analysis: aiAnalysis,
+            chainable_data: chainableData,
             tools_used: step.tools,
             data_counts: {
                 pubmed_results: combinedResults.pubmed_search?.length || combinedResults.pubmed_fetch?.length || 0,
@@ -252,7 +283,7 @@ export async function POST(req: Request) {
 
         await updateSubTask(sessionId, taskId, {
             status: 'DONE',
-            result_data: stepSummary  // Only concise summary, NOT raw data
+            result_data: stepSummary
         });
 
         logger.info(`${LOG} ✅ Step ${taskId} DONE. Summary stored, raw data in subcollection.`);

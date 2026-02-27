@@ -99,9 +99,9 @@ export async function POST(req: Request) {
 
         logger.info(`${LOG} Synthesizing report for query: "${session.user_request}"`);
 
-        // Build clean context from AI agent summaries only.
-        // Since the execute route now stores only AI analyses on result_data
-        // (raw data lives in Firestore subcollection), no truncation is needed.
+        // Build context from AI agent summaries AND chainable raw data (researcher profiles, etc.)
+        // The AI analyses provide reasoning, and chainable_data provides the hard facts
+        // (names, scores, h-indices, profile URLs, DOIs) for the report table.
         const agentContext = session.plan.map((step: any) => ({
             stepId: step.id,
             name: step.name,
@@ -109,6 +109,12 @@ export async function POST(req: Request) {
             tools: step.tools,
             status: step.status,
             ai_analysis: step.result_data?.ai_analysis || null,
+            researcher_data: step.result_data?.chainable_data?.openalex_search_authors
+                || step.result_data?.chainable_data?.openalex_get_author
+                || null,
+            pubmed_data: step.result_data?.chainable_data?.pubmed_fetch || null,
+            bigquery_data: step.result_data?.chainable_data?.bigquery || null,
+            vertex_search_data: step.result_data?.chainable_data?.vertex_search_retrieve || null,
             data_counts: step.result_data?.data_counts || null,
         }));
 
