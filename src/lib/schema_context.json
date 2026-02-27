@@ -1,0 +1,417 @@
+{
+  "open-targets-prod.platform.disease": [
+    {
+      "name": "id",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "code",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "name",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "description",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "dbXRefs",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "parents",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "synonyms",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "obsoleteTerms",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "obsoleteXRefs",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "children",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "ancestors",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "therapeuticAreas",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "descendants",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "ontology",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    }
+  ],
+  "open-targets-prod.platform.target": [
+    {
+      "name": "id",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "approvedSymbol",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "biotype",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "transcriptIds",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "canonicalTranscript",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "canonicalExons",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "genomicLocation",
+      "type": "RECORD",
+      "mode": "REQUIRED"
+    },
+    {
+      "name": "alternativeGenes",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "approvedName",
+      "type": "STRING",
+      "mode": "REQUIRED"
+    },
+    {
+      "name": "go",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "hallmarks",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "synonyms",
+      "type": "RECORD",
+      "mode": "REQUIRED"
+    },
+    {
+      "name": "symbolSynonyms",
+      "type": "RECORD",
+      "mode": "REQUIRED"
+    },
+    {
+      "name": "nameSynonyms",
+      "type": "RECORD",
+      "mode": "REQUIRED"
+    },
+    {
+      "name": "functionDescriptions",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "subcellularLocations",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "targetClass",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "obsoleteSymbols",
+      "type": "RECORD",
+      "mode": "REQUIRED"
+    },
+    {
+      "name": "obsoleteNames",
+      "type": "RECORD",
+      "mode": "REQUIRED"
+    },
+    {
+      "name": "constraint",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "tep",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "proteinIds",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "dbXrefs",
+      "type": "RECORD",
+      "mode": "REQUIRED"
+    },
+    {
+      "name": "chemicalProbes",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "homologues",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "tractability",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "safetyLiabilities",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "pathways",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "tss",
+      "type": "INTEGER",
+      "mode": "NULLABLE"
+    }
+  ],
+  "open-targets-prod.platform.drug": [
+    {
+      "name": "drugId",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "targetId",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "diseaseId",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "phase",
+      "type": "FLOAT",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "status",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "urls",
+      "type": "RECORD",
+      "mode": "REQUIRED"
+    },
+    {
+      "name": "ancestors",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "label",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "approvedSymbol",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "approvedName",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "targetClass",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "prefName",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "tradeNames",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "synonyms",
+      "type": "RECORD",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "drugType",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "mechanismOfAction",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "targetName",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    }
+  ],
+  "open-targets-prod.platform.assoc": [
+    {
+      "name": "diseaseId",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "targetId",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "score",
+      "type": "FLOAT",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "evidenceCount",
+      "type": "INTEGER",
+      "mode": "NULLABLE"
+    }
+  ],
+  "open-targets-prod.platform.prioritisation": [
+    {
+      "name": "targetId",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "isInMembrane",
+      "type": "INTEGER",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "isSecreted",
+      "type": "INTEGER",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "hasSafetyEvent",
+      "type": "INTEGER",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "hasPocket",
+      "type": "INTEGER",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "hasLigand",
+      "type": "INTEGER",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "hasSmallMoleculeBinder",
+      "type": "INTEGER",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "geneticConstraint",
+      "type": "FLOAT",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "paralogMaxIdentityPercentage",
+      "type": "FLOAT",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "mouseOrthologMaxIdentityPercentage",
+      "type": "FLOAT",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "isCancerDriverGene",
+      "type": "INTEGER",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "hasTEP",
+      "type": "INTEGER",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "mouseKOScore",
+      "type": "FLOAT",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "hasHighQualityChemicalProbes",
+      "type": "INTEGER",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "maxClinicalTrialPhase",
+      "type": "FLOAT",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "tissueSpecificity",
+      "type": "FLOAT",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "tissueDistribution",
+      "type": "FLOAT",
+      "mode": "NULLABLE"
+    }
+  ]
+}

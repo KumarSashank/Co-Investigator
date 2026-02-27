@@ -1,22 +1,160 @@
-# Co-Investigator - BenchSpark Hackathon Project
+# 🔬 Co-Investigator — From Search Bar to Research Partner
 
-Welcome to the Co-Investigator repository for the BenchSpark Hackathon (Challenge 7)! 
+> **BenchSpark Hackathon 2026 | Challenge 7 | Team: Lazy Coders**
 
-We have exactly **20 hours** left. **Do not write code manually.** We are relying entirely on AI code generation tools (Cursor, ChatGPT, Antigravity) to build this project in parallel.
+An **agentic AI Research Assistant** that operates like a high-level research intern — decomposing complex biomedical research requests into multi-step, event-driven workflows, tracking task state in Firestore, and interacting with users via Human-in-the-Loop checkpoints before proceeding.
 
-## 🚨 CRITICAL: START HERE
+## 🎯 Problem
 
-To prevent Git merge conflicts and AI hallucination, **you must read the following two documents before you start writing any prompts.**
+Modern researchers are overwhelmed by fragmented data across PubMed, OpenAlex, BigQuery, and other databases. Current AI tools provide "one-shot" answers but fail at complex, multi-stage tasks. Co-Investigator moves from being a **calculator** to a **co-investigator** by managing its own task-tracking and combining internal disease data with Gemini's expansive external knowledge.
 
-1. [context/team_workflow.md](./context/team_workflow.md): This explains *exactly* which folders you are allowed to edit, and what prompts you should use to start your AI.
-2. [context/shared_context.md](./context/shared_context.md): This contains the exact TypeScript Data Transfer Objects (DTOs) that we are passing between the frontend, the tools, and the AI Agent. **You must copy-paste this document into your AI's context window before asking it to write code.**
+## ✅ How It Works
 
-## Setup Instructions
+1. **Input**: Scientist enters a natural language query
+   - _"Find researchers who have published on idiopathic pulmonary fibrosis treatment in the last 3 years"_
+2. **AI Planning**: Gemini 2.5 Flash decomposes the query into 3–6 executable steps
+3. **Plan Review**: User reviews, edits (add/remove/rename steps), and approves
+4. **Agentic Execution**: Each step runs tools + a domain-specialist AI agent analyzes the results
+5. **HITL Checkpoint**: Agent pauses at least once for human confirmation
+6. **Final Report**: Gemini synthesizes findings into a grounded, 7-section markdown report with Google Search Grounding
 
-1. **Clone the repository and pull `main`**.
-2. **Branch off immediately:** `git checkout -b feature/<your-name-or-feature>`
-3. **Install dependencies:** `npm install`
-4. **Authenticate with GCP (Lead Only):** Run `./gcp-login.sh`
-5. **Start developing with your AI in your assigned folders!**
+## 🏗️ Architecture
 
-Good luck, and remember: stick to your folder boundaries!
+```
+                    ┌─────────────────────────────────┐
+                    │      Next.js Frontend (UI)      │
+                    │   PlanReview · TaskTracker ·     │
+                    │   EvidenceDashboard · Brief      │
+                    └──────────┬──────────────────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              ▼                ▼                ▼
+    ┌─────────────┐   ┌──────────────┐   ┌───────────────┐
+    │ POST /plan  │   │ POST /execute│   │ POST /report  │
+    │ Planner     │   │ Tool Runner  │   │ Synthesizer   │
+    │ Agent       │   │ + Specialist │   │ Agent         │
+    │ (2.5 Flash) │   │ Agents       │   │ (2.5 Flash +  │
+    │             │   │ (2.0 Flash)  │   │  Google Search│
+    └─────────────┘   └──────┬───────┘   │  Grounding)  │
+                             │           └───────────────┘
+          ┌──────────────────┼──────────────────┐
+          ▼                  ▼                  ▼
+   ┌─────────────┐   ┌─────────────┐   ┌────────────────┐
+   │  BigQuery   │   │  OpenAlex   │   │    PubMed      │
+   │ Open Targets│   │  Author     │   │   E-utilities  │
+   │ + PrimeKG   │   │  Search/Get │   │  Search/Fetch  │
+   └─────────────┘   └─────────────┘   └────────────────┘
+          │                                     │
+          ▼                                     ▼
+   ┌──────────────────────────────────────────────────┐
+   │            Firestore State Engine                 │
+   │  Sessions · Step Status · Raw Data Subcollections │
+   │              + GCS Artifact Backup                │
+   └──────────────────────────────────────────────────┘
+```
+
+## ☁️ Google Cloud Services Used
+
+| Service | Why We Used It |
+|---------|---------------|
+| **Vertex AI (Gemini 2.5 Flash)** | Planner agent and report synthesizer. 2.5 Flash chosen for its structured JSON output and Google Search Grounding capability |
+| **Vertex AI (Gemini 2.0 Flash)** | Step-level specialist agents. 2.0 Flash is faster for per-step reasoning, keeping execution latency low |
+| **Vertex AI Search** | Grounded retrieval against internal knowledge bases (fallback to Gemini + Google Search) |
+| **BigQuery** | Querying Open Targets Platform and PrimeKG datasets for disease-target associations, drug pipelines, and druggability profiles. Chosen because it's the hackathon's recommended OLAP layer and datasets are pre-loaded |
+| **Firestore** | Stateful session management for the agentic pipeline: sessions, step status tracking, HITL checkpoint persistence, raw data subcollections for progressive disclosure |
+| **Cloud Storage (GCS)** | Artifact backup for each execution step's raw JSON output |
+
+## 🧬 Multi-Agent Architecture
+
+Not a single-prompt system. Each step in the pipeline has a **domain-specialist agent**:
+
+- **Disease Grounding Specialist** — Analyzes BigQuery/Vertex Search output to identify top targets
+- **Research Impact Analyst** — Ranks OpenAlex researchers by relevance, not just h-index
+- **Activity Verification Agent** — Cross-references publication timelines to flag rising stars
+- **Contact Extraction Agent** — Extracts emails and affiliations from PubMed metadata
+- **Cross-Reference Synthesis Agent** — Combines all upstream analyses into target–researcher maps
+
+Each agent passes structured context to the next via a **context chain**, enabling multi-hop reasoning.
+
+## 🛡️ Hallucination Guardrails
+
+- **Google Search Grounding** on the final report synthesis step
+- **Data provenance badges** on every evidence card (BigQuery / OpenAlex / PubMed / AI Analysis)
+- **Confidence scores** per agent step (HIGH / MEDIUM / LOW)
+- **Strict citation rules** — the report prompt forbids fabricating DOIs, PMIDs, emails, or affiliations
+- **Source separation** — raw tool data vs. AI-generated analyses are visually distinguished
+
+## 🧪 Acceptance Criteria (Challenge 7)
+
+| Requirement | Status |
+|---|---|
+| Accepts natural language research requests | ✅ |
+| Decomposes into 2–3+ executable sub-tasks | ✅ (3–6 steps) |
+| Queries pre-loaded BigQuery disease datasets | ✅ (Open Targets + PrimeKG) |
+| Maintains basic task state | ✅ (Firestore state engine) |
+| HITL checkpoint (pause for user confirmation) | ✅ |
+| Structured summary of findings | ✅ (7-section markdown report) |
+
+### Stretch Goals
+
+| Goal | Status |
+|---|---|
+| Integrate OpenAlex + PubMed APIs | ✅ |
+| Session history with full audit trail | ✅ |
+| Formatted markdown + PDF export | ✅ |
+
+## 🚀 Quick Start
+
+```bash
+# Install
+npm install
+
+# Set environment variables
+cp .env.local.example .env.local
+# Edit .env.local with your GCP project ID
+
+# Authenticate with GCP
+gcloud auth application-default login
+
+# Run
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) and enter a research query.
+
+## 📂 Project Structure
+
+```
+src/
+├── app/
+│   ├── page.tsx                    # Main UI (3-panel layout)
+│   └── api/agent/
+│       ├── plan/route.ts           # Planner agent
+│       ├── execute/route.ts        # Tool executor + specialist agents
+│       ├── report/route.ts         # Synthesis agent
+│       ├── session/route.ts        # Session retrieval
+│       └── sessions/route.ts       # Session history
+├── components/
+│   ├── PlanReview.tsx              # Editable plan approval UI
+│   ├── TaskTracker.tsx             # Live execution tracking
+│   ├── EvidenceDashboard.tsx       # Auto-populating evidence cards
+│   ├── ResearchBrief.tsx           # Final report with PDF export
+│   └── panels/                    # Domain-specific data panels
+├── lib/
+│   ├── bigquery.ts                # BigQuery query engine
+│   ├── openalex.ts                # OpenAlex integration
+│   ├── pubmed.ts                  # PubMed E-utilities
+│   ├── vertexSearch.ts            # Vertex AI Search
+│   ├── vertex/stepAgent.ts        # Specialist agent framework
+│   ├── vertex/retry.ts            # Rate limit handling
+│   └── firestore/stateEngine.ts   # Session persistence
+└── types.ts                       # Shared TypeScript interfaces
+```
+
+## 👥 Team
+
+**Lazy Coders** — BenchSpark Hackathon 2026
+
+## 📜 License
+
+MIT

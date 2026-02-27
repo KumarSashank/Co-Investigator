@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { DeepResearchPlan, PlanStep } from '@/types';
 
 interface Message {
     id: string;
@@ -9,18 +10,16 @@ interface Message {
     timestamp: Date;
 }
 
-const MOCK_RESPONSES = [
-    "I'll create a research plan to investigate that. Let me break this down into subtasks using BigQuery, PubMed, and OpenAlex...\n\n**Plan created with 5 steps:**\n1. Query BigQuery for disease-target associations\n2. Search PubMed for recent publications\n3. Identify key researchers via OpenAlex\n4. Cross-reference with clinical trial data\n5. Synthesize findings into a research brief",
-    "Great question! I'm querying the Open Targets BigQuery dataset now. I found **3 high-confidence targets** for IPF:\n\n• **MUC5B** (score: 0.92) — Mucin production pathway\n• **TERT** (score: 0.87) — Telomere maintenance\n• **TGFB1** (score: 0.81) — TGF-β signaling\n\nShall I proceed to search PubMed for recent publications on these targets?",
-    "I've identified **Dr. Ganesh Raghu** (h-index: 91, University of Washington) as the most prolific IPF researcher. I also found 12 other active investigators. Would you like me to compile the full research brief now?",
-];
+interface ChatInterfaceProps {
+    onPlanCreated: (planObj: DeepResearchPlan) => void;
+}
 
-export default function ChatInterface() {
+export default function ChatInterface({ onPlanCreated }: ChatInterfaceProps) {
     const [messages, setMessages] = useState<Message[]>([
         {
             id: 'init',
             role: 'assistant',
-            text: "Hello! I'm your **Co-Investigator** — an AI research assistant powered by Vertex AI.\n\nI can help you investigate diseases, find genetic targets, identify key researchers, and synthesize literature. What would you like to research today?",
+            text: "Hello! I'm **Benchie**.\n\nI can execute complex, multi-step research plans, fetch evidence, and synthesize grounded reports. What would you like to investigate today?",
             timestamp: new Date(),
         },
     ]);
@@ -28,7 +27,6 @@ export default function ChatInterface() {
     const [isTyping, setIsTyping] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
-    const responseIdx = useRef(0);
 
     const scrollToBottom = useCallback(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -38,7 +36,7 @@ export default function ChatInterface() {
         scrollToBottom();
     }, [messages, isTyping, scrollToBottom]);
 
-    const handleSend = () => {
+    const handleSend = async () => {
         const text = input.trim();
         if (!text || isTyping) return;
 
@@ -52,20 +50,56 @@ export default function ChatInterface() {
         setInput('');
         setIsTyping(true);
 
-        // Simulate AI response
-        const delay = 1500 + Math.random() * 1500;
-        setTimeout(() => {
-            const response = MOCK_RESPONSES[responseIdx.current % MOCK_RESPONSES.length];
-            responseIdx.current++;
-            const assistantMsg: Message = {
+        try {
+            const res = await fetch('/api/agent/plan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: text }),
+            });
+
+            const data = await res.json();
+
+            if (data.status === 'success' && data.plan) {
+                const planObj: DeepResearchPlan = data.plan;
+
+                // Format the plan into a readable message
+                const planSteps = planObj.plan
+                    .map((step: PlanStep, i: number) => {
+                        const tools = step.tools.join(', ');
+                        return `${i + 1}. **${step.name}** → \`${tools}\``;
+                    })
+                    .join('\n');
+
+                const assistantMsg: Message = {
+                    id: `asst-${Date.now()}`,
+                    role: 'assistant',
+                    text: `I've created a research plan with [tooltip:The number of distinct, sequential tool actions the planner agent determined are necessary to complete this specific investigation.](${planObj.plan.length} steps):\n\n${planSteps}\n\nStarting execution now — check the Investigation Plan panel on the right to track progress. I will pause when human confirmation is needed.`,
+                    timestamp: new Date(),
+                };
+                setMessages((prev) => [...prev, assistantMsg]);
+
+                // Notify parent to update session state and start execution
+                onPlanCreated(planObj);
+            } else {
+                const errorMsg: Message = {
+                    id: `asst-${Date.now()}`,
+                    role: 'assistant',
+                    text: `⚠️ I encountered an issue creating the research plan:\n\n\`${data.error || 'Unknown error'}\`\n\nThis might be a GCP authentication issue, or rate limiting.`,
+                    timestamp: new Date(),
+                };
+                setMessages((prev) => [...prev, errorMsg]);
+            }
+        } catch (err: any) {
+            const errorMsg: Message = {
                 id: `asst-${Date.now()}`,
                 role: 'assistant',
-                text: response,
+                text: `⚠️ Network error — couldn't reach the server:\n\n\`${err.message}\`\n\nMake sure the dev server is running.`,
                 timestamp: new Date(),
             };
-            setMessages((prev) => [...prev, assistantMsg]);
-            setIsTyping(false);
-        }, delay);
+            setMessages((prev) => [...prev, errorMsg]);
+        }
+
+        setIsTyping(false);
     };
 
     const formatTime = (d: Date) =>
@@ -86,21 +120,26 @@ export default function ChatInterface() {
                             {msg.text.split('\n').map((line, i) => {
                                 // Bold
                                 const rendered = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                                // Code
+                                const withCode = rendered.replace(/`([^`]+)`/g, '<code style="background:var(--bg-input);padding:1px 5px;border-radius:3px;font-size:0.85em;color:var(--accent-cyan)">$1</code>');
+                                // Tooltip
+                                const withTooltip = withCode.replace(/\[tooltip:(.*?)\]\((.*?)\)/g, '<span title="$1" style="border-bottom: 1px dotted var(--text-muted); cursor: help;" class="hover:border-[var(--accent-cyan)] transition-colors">$2</span>');
+
                                 // Bullet
                                 if (line.startsWith('• ') || line.startsWith('- ')) {
                                     return (
-                                        <p key={i} className="ml-2 my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: '• ' + rendered.slice(2) }} />
+                                        <p key={i} className="ml-2 my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: '• ' + withTooltip.slice(2) }} />
                                     );
                                 }
                                 // Numbered
                                 if (/^\d+\.\s/.test(line)) {
                                     return (
-                                        <p key={i} className="ml-2 my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: rendered }} />
+                                        <p key={i} className="ml-2 my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: withTooltip }} />
                                     );
                                 }
                                 if (line === '') return <br key={i} />;
                                 return (
-                                    <p key={i} className="my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: rendered }} />
+                                    <p key={i} className="my-0.5 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: withTooltip }} />
                                 );
                             })}
                             <span
@@ -138,7 +177,7 @@ export default function ChatInterface() {
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                        placeholder="e.g., Find researchers who have published on IPF in the last 3 years"
+                        placeholder="e.g., Identify active researchers in IPF target discovery"
                         className="input-glow flex-1 px-4 py-3 rounded-xl text-sm"
                         style={{
                             background: 'var(--bg-input)',
@@ -161,7 +200,7 @@ export default function ChatInterface() {
                     </button>
                 </div>
                 <p className="text-[10px] mt-2 text-center" style={{ color: 'var(--text-muted)' }}>
-                    Co-Investigator uses Vertex AI with Google Search grounding for verified research.
+                    DeepResearch uses Vertex AI with strict grounded citations and tool execution.
                 </p>
             </div>
         </div>
