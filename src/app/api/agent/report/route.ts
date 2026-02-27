@@ -99,14 +99,26 @@ export async function POST(req: Request) {
 
         logger.info(`${LOG} Synthesizing report for query: "${session.user_request}"`);
 
-        // Stringify the plan and all collected result data to give Gemini full context.
-        // In a true massive-data system, we would stream the GCS artifacts directly, 
-        // but passing the aggregated JSON is sufficient and highly reliably for gemini-2.5-flash context windows.
+        // Build clean context from AI agent summaries only.
+        // Since the execute route now stores only AI analyses on result_data
+        // (raw data lives in Firestore subcollection), no truncation is needed.
+        const agentContext = session.plan.map((step: any) => ({
+            stepId: step.id,
+            name: step.name,
+            intent: step.intent,
+            tools: step.tools,
+            status: step.status,
+            ai_analysis: step.result_data?.ai_analysis || null,
+            data_counts: step.result_data?.data_counts || null,
+        }));
+
         const contextData = JSON.stringify({
             originalQuery: session.user_request,
-            planSteps: session.plan,
+            agentAnalyses: agentContext,
             gcsArtifacts: session.artifacts || {}
         }, null, 2);
+
+        logger.info(`${LOG} Context size: ${contextData.length} characters (clean, no raw data)`);
 
         const requestBody = {
             contents: [{
@@ -119,9 +131,22 @@ export async function POST(req: Request) {
         };
 
         logger.info(`${LOG} Calling Gemini 2.5 Flash for grounded synthesis...`);
-        const response = await generativeModel.generateContent(requestBody);
 
-        let reportMarkdown = response.response.candidates?.[0]?.content?.parts?.[0]?.text || "Failed to generate report text.";
+        let reportMarkdown: string;
+        try {
+            const response = await generativeModel.generateContent(requestBody);
+            reportMarkdown = response.response.candidates?.[0]?.content?.parts?.[0]?.text || "Failed to generate report text.";
+        } catch (primaryError: any) {
+            // If the googleSearch grounding tool fails, retry WITHOUT it
+            logger.warn(`${LOG} ⚠️ Primary model (with Google Search) failed: ${primaryError.message}. Retrying without grounding...`);
+
+            const fallbackModel = vertexAI.getGenerativeModel({
+                model: 'gemini-2.0-flash', // Faster, no grounding tool
+            });
+            const fallbackResponse = await fallbackModel.generateContent(requestBody);
+            reportMarkdown = fallbackResponse.response.candidates?.[0]?.content?.parts?.[0]?.text || "Failed to generate report text.";
+            reportMarkdown += "\n\n> ⚠️ *Note: This report was generated without Google Search Grounding due to a temporary service issue.*";
+        }
 
         logger.info(`${LOG} ✅ Report generated (${reportMarkdown.length} characters)`);
 

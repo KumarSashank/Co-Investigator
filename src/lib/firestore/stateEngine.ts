@@ -108,3 +108,53 @@ export async function updateSubTask(session_id: string, stepId: string, taskUpda
 
     console.log(`[StateEngine] Updated step ${stepId} in Firestore → status: ${taskUpdates.status || 'unchanged'}`);
 }
+
+/**
+ * Saves the FULL raw tool output to a Firestore subcollection.
+ * Path: co_investigator_sessions/{session_id}/steps/{stepId}
+ * This keeps the main session document small (only AI summaries).
+ */
+export async function saveStepRawData(session_id: string, stepId: string, rawData: Record<string, any>) {
+    try {
+        const docRef = firestore
+            .collection(COLLECTION_NAME)
+            .doc(session_id)
+            .collection('steps')
+            .doc(stepId);
+
+        await docRef.set({
+            stepId,
+            rawData,
+            savedAt: new Date().toISOString()
+        });
+
+        console.log(`[StateEngine] 📦 Saved raw data for step ${stepId} (subcollection)`);
+    } catch (error) {
+        console.error(`[StateEngine] ❌ Failed to save raw data for step ${stepId}:`, error);
+    }
+}
+
+/**
+ * Retrieves the full raw tool output for a specific step.
+ * Called on-demand when user clicks "View Details" in the UI.
+ */
+export async function getStepRawData(session_id: string, stepId: string): Promise<Record<string, any> | null> {
+    try {
+        const docRef = firestore
+            .collection(COLLECTION_NAME)
+            .doc(session_id)
+            .collection('steps')
+            .doc(stepId);
+
+        const docSnap = await docRef.get();
+        if (!docSnap.exists) {
+            console.error(`[StateEngine] ❌ Raw data NOT FOUND for step ${stepId}`);
+            return null;
+        }
+
+        return docSnap.data()?.rawData || null;
+    } catch (error) {
+        console.error(`[StateEngine] ❌ Error fetching raw data for step ${stepId}:`, error);
+        return null;
+    }
+}

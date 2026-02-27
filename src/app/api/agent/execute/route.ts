@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
-import { firestore_get_session, firestore_upsert_session, updateSubTask } from '@/lib/firestore/stateEngine';
+import { firestore_get_session, firestore_upsert_session, updateSubTask, saveStepRawData } from '@/lib/firestore/stateEngine';
 import { gcs_write } from '@/lib/gcs';
 import { logger } from '@/lib/logger';
 import { pubmed_search, pubmed_fetch } from '@/lib/pubmed';
 import { openalex_search_authors, openalex_get_author } from '@/lib/openalex';
+import { runStepAgent } from '@/lib/vertex/stepAgent';
 
 const LOG = '🤖 [Execute]';
 
@@ -21,6 +22,26 @@ function findPreviousStepData(session: any, currentStepId: string): Record<strin
         }
     }
     return allResults;
+}
+
+/**
+ * Collects AI analyses from previous completed steps.
+ * This is how agents communicate: each step's AI analysis
+ * becomes input context for the next step's specialist agent.
+ */
+function findPreviousAgentAnalyses(session: any, currentStepId: string): Record<string, any> {
+    const analyses: Record<string, any> = {};
+    for (const step of session.plan) {
+        if (step.id === currentStepId) break;
+        if (step.status === 'DONE' && step.result_data?.ai_analysis) {
+            analyses[step.id] = {
+                agent_name: step.result_data.ai_analysis.agent_name,
+                intent: step.intent,
+                analysis: step.result_data.ai_analysis
+            };
+        }
+    }
+    return analyses;
 }
 
 export async function POST(req: Request) {
@@ -184,7 +205,27 @@ export async function POST(req: Request) {
             }
         }
 
-        // 5. Write raw tool outputs to GCS
+        // 5. Run the Step-Level Specialist Agent (the multi-agent magic)
+        //    This is a SECOND Gemini call that analyzes the raw tool output
+        //    and produces structured insights for downstream agents.
+        logger.info(`${LOG} 🧬 Invoking specialist agent for intent: ${step.intent}`);
+        const previousAnalyses = findPreviousAgentAnalyses(session, taskId);
+        logger.info(`${LOG} 📡 Passing ${Object.keys(previousAnalyses).length} previous agent analyses as context`);
+
+        const aiAnalysis = await runStepAgent(
+            step.intent,
+            combinedResults,
+            previousAnalyses,
+            session.user_request
+        );
+
+        logger.info(`${LOG} 🧬 Agent ${aiAnalysis.agent_name || step.intent} completed. Confidence: ${aiAnalysis.confidence || 'N/A'}`);
+
+        // 6. SAVE RAW DATA to Firestore subcollection (full tool output)
+        //    This is the "deep storage" — only fetched when user clicks "View Details"
+        await saveStepRawData(sessionId, taskId, combinedResults);
+
+        // 7. Write to GCS as backup
         const gcsPath = `runs/${sessionId}/${taskId}.json`;
         let artifactUri = '';
         try {
@@ -197,19 +238,30 @@ export async function POST(req: Request) {
             artifactUri = `local://no-gcs`;
         }
 
-        // 6. Mark task DONE
+        // 8. Mark task DONE — store ONLY the AI summary on PlanStep, not the raw dump
+        const stepSummary = {
+            ai_analysis: aiAnalysis,
+            tools_used: step.tools,
+            data_counts: {
+                pubmed_results: combinedResults.pubmed_search?.length || combinedResults.pubmed_fetch?.length || 0,
+                openalex_authors: combinedResults.openalex_search_authors?.length || combinedResults.openalex_get_author?.length || 0,
+                bigquery_targets: combinedResults.bigquery?.associatedTargets?.length || 0,
+            },
+            artifact_uri: artifactUri,
+        };
+
         await updateSubTask(sessionId, taskId, {
             status: 'DONE',
-            result_data: combinedResults
+            result_data: stepSummary  // Only concise summary, NOT raw data
         });
 
-        logger.info(`${LOG} ✅ Step ${taskId} DONE. Artifact: ${artifactUri}`);
+        logger.info(`${LOG} ✅ Step ${taskId} DONE. Summary stored, raw data in subcollection.`);
 
         return NextResponse.json({
             status: 'success',
             taskId,
             artifactUri,
-            result: combinedResults
+            result: stepSummary  // Only summary sent to frontend
         });
 
     } catch (error: any) {
