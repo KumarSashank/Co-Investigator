@@ -53,6 +53,12 @@ STRICT RULES:
 // ============================================================
 // COMPREHENSIVE TEMPLATE-BASED REPORT (when Gemini is unavailable)
 // ============================================================
+function scoreToConfidence(score: number): string {
+    if (score >= 0.8) return 'High';
+    if (score >= 0.5) return 'Medium';
+    return 'Low';
+}
+
 function generateTemplateReport(session: any): string {
     const query = session.user_request || 'Research query';
     const steps = session.plan || [];
@@ -90,7 +96,8 @@ function generateTemplateReport(session: any): string {
     report += `PubMed for recent publications${pubmedPMIDs.length > 0 ? ` (${pubmedPMIDs.length} articles identified)` : ''}, `;
     report += `and OpenAlex for active researchers${researchers.length > 0 ? ` (${researchers.length} candidate researchers ranked)` : ''}. `;
     if (targets.length > 0) {
-        report += `Key gene targets identified include **${targets.slice(0, 3).map((t: any) => t.targetSymbol).join('**, **')}** with evidence scores ranging from ${targets[targets.length - 1]?.evidenceScore?.toFixed(2) || '0.5'} to ${targets[0]?.evidenceScore?.toFixed(2) || '1.0'}.`;
+        const topTargets = targets.slice(0, 3).map((t: any) => t.targetSymbol).join('**, **');
+        report += `Key gene targets identified include **${topTargets}** with confidence levels ranging from ${scoreToConfidence(targets[targets.length - 1]?.evidenceScore || 0.5)} to ${scoreToConfidence(targets[0]?.evidenceScore || 1.0)}.`;
     }
     report += `\n\n`;
 
@@ -109,10 +116,11 @@ function generateTemplateReport(session: any): string {
     if (targets.length > 0) {
         report += `### Key Genetic Targets & Associations\n\n`;
         report += `Based on data retrieved from BigQuery (CIViC and PrimeKG datasets), the following gene targets were identified as having the strongest association with the queried disease/topic:\n\n`;
-        report += `| Rank | Gene Target | Evidence Score | Ensembl ID |\n`;
-        report += `|------|-------------|----------------|------------|\n`;
+        report += `| Rank | Gene Target | Confidence | Ensembl ID |\n`;
+        report += `|------|-------------|------------|------------|\n`;
         targets.forEach((t: any, i: number) => {
-            report += `| ${i + 1} | **${t.targetSymbol}** | ${t.evidenceScore?.toFixed(2) || 'N/A'} | ${t.targetId || 'N/A'} |\n`;
+            const confidence = scoreToConfidence(t.evidenceScore || 0);
+            report += `| ${i + 1} | **${t.targetSymbol}** | ${confidence} | ${t.targetId || 'N/A'} |\n`;
         });
         report += `\n`;
 
