@@ -6,7 +6,7 @@ An **agentic AI Research Assistant** that operates like a high-level research in
 
 <div align="center">
   <a href="https://youtu.be/IwU3c38XRoo">
-    <img src="https://img.youtube.com/vi/IwU3c38XRoo/maxresdefault.jpg" alt="Benchie Demo Video" width="720">
+    <img src="https://img.youtube.com/vi/IwU3c38XRoo/hqdefault.jpg" alt="Benchie Demo Video" width="720">
   </a>
 </div>
 
