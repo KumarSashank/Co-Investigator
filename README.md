@@ -4,6 +4,12 @@
 
 An **agentic AI Research Assistant** that operates like a high-level research intern — decomposing complex biomedical research requests into multi-step, event-driven workflows, tracking task state in Firestore, and interacting with users via Human-in-the-Loop checkpoints before proceeding.
 
+<div align="center">
+  <iframe width="720" height="405" src="https://www.youtube.com/embed/IwU3c38XRoo" title="Benchie Demo" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+</div>
+
+> 📄 **[View Sample AI-Generated Research Report](./Benchie%20Research%20Report.pdf)**
+
 ## 🎯 Problem
 
 Modern researchers are overwhelmed by fragmented data across PubMed, OpenAlex, BigQuery, and other databases. Current AI tools provide "one-shot" answers but fail at complex, multi-stage tasks. Benchie moves from being a **calculator** to a **co-investigator** by managing its own task-tracking and combining internal disease data with Gemini's expansive external knowledge.
